@@ -1,4 +1,4 @@
-Nodes - Executable code, can communicate with other nodes, through topics, can subscribe to topics which is data being sent between them.
+so2Nodes - Executable code, can communicate with other nodes, through topics, can subscribe to topics which is data being sent between them.
 
 git config --global user.name "Your Name"
 git config --global user.email "your_email@example.com"
@@ -24,4 +24,3 @@ Plan:
 To make sure block is still being pushed, pull robot back some distance when block goes out of sight, then push once more for x distance.
 * if a block is in sight, and on obstacles in its path, head for the object, use lidar range at certain angles to create cone to detect obstacles. Avoid them by re adjusting location.
 * If no blocks are initially visible, rotate 360. If none are still visible advance to close to a wall or obstacle, rotate to keep parallel with object, navigate around object, keeping distance to it in same range, until the conditions above are present.
-* 

@@ -120,10 +120,16 @@ class ColourChaser(Node):
         else:
             # No contours detected: Rotate to search for the object
 
-            print(self.forward_range_value)         
+            # print(self.forward_range_value)         
         
-            self.turn_vel = 0.3  # Turn left to scan
-            self.forward_vel = 0.0  # Stop moving forward
+            # self.turn_vel = 0.3  # Turn left to scan
+            initial_distance=self.forward_range_value
+
+            # if (self.forward_range_value > 0.1):
+            #  print(initial_distance)               
+             
+            #  while(initial_distance - self.forward_range_value > 0.2):
+            #     self.forward_vel = 0.1  
 
             # Alternative search behavior: Random turn direction
             # import random
@@ -144,17 +150,16 @@ class ColourChaser(Node):
     def laser_scan_callback(self, data):
         self.laser_scan = data
         if self.laser_scan is not None:
-            forward_index = len(self.laser_scan.ranges) // 2
-            if 0 <= forward_index < len(self.laser_scan.ranges):
-                forward_range = self.laser_scan.ranges[forward_index]
-                if math.isfinite(forward_range):
-                    self.forward_range_value = forward_range #assign the forward range to the class variable.
-                else:
-                    self.forward_range_value = float('inf')
-            else:
-                self.forward_range_value = None
-        else:
-            self.forward_range_value = None
+            rangeMin = self.laser_scan.angle_min
+            rangeMax = self.laser_scan.angle_max
+            increment = self.laser_scan.angle_increment
+            middle = (rangeMin+rangeMax) /2
+            forward_index = int((middle - rangeMin) / increment)
+            print(forward_index) 
+            middleValue = self.laser_scan.ranges[forward_index]
+            print(middleValue)
+
+               
 
 
     # Timer callback to periodically publish velocity commands
