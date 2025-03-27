@@ -16,6 +16,7 @@ from cv_bridge import CvBridge  # Converts between ROS 2 Image messages and Open
 import cv2  # OpenCV library for image processing
 import numpy as np  # NumPy library for numerical operations (e.g., array manipulation)
 import math
+from threading import Lock
 
 # Define a custom ROS 2 node class called ColourChaser, inheriting from Node
 class ColourChaser(Node):
@@ -43,8 +44,18 @@ class ColourChaser(Node):
         # Initialize CvBridge to convert between ROS 2 and OpenCV image formats
         self.br = CvBridge()
         self.forward_range_value = None  # Initialize forward_range_value
+        self.initial_distance = None
 
         self.laser_scan = None #initialize laser_scan
+        self.middleValue = None
+        self.initial_distance= None
+        
+        self.key=True
+        self.lock = Lock()
+
+        
+
+
         
 
 
@@ -103,7 +114,7 @@ class ColourChaser(Node):
                 # Moving forward logic based on contour area (commented out in original)
                 # area = cv2.contourArea(contours[0])  # Calculate area of the contour
                 # target_area = 50000  # Desired area when object is "close enough"
-                # if area < target_area:
+                # if area < target_area:os
                 #     self.forward_vel = 0.1  # Move forward if object is too small (far away)
                 # else:
                 #     self.forward_vel = 0.0  # Stop if object is large enough (close enough)
@@ -119,17 +130,30 @@ class ColourChaser(Node):
 
         else:
             # No contours detected: Rotate to search for the object
+            
 
             # print(self.forward_range_value)         
         
-            # self.turn_vel = 0.3  # Turn left to scan
-            initial_distance=self.forward_range_value
+            # # self.turn_vel = 0.3  # Turn left to scan
+            # with self.lock:                        
+            #     if self.key == True:
+            #         self.initial_distance = self.middleValue
+            #         # print(self.initial_distance)
+            #         # print(self.middleValue)
+            #         print("in")
+            #         self.key = False
+            #     print("out")
+            #     # print(self.initial_distance)
+            #     cubeDistance = self.initial_distance - self.middleValue
+            #     print(cubeDistance)
+            #     if cubeDistance < 0.2:
 
-            # if (self.forward_range_value > 0.1):
-            #  print(initial_distance)               
-             
-            #  while(initial_distance - self.forward_range_value > 0.2):
-            #     self.forward_vel = 0.1  
+            #         self.forward_vel = 0.1  
+                
+                self.forward_vel = -0.2
+
+                # self.key = True
+                
 
             # Alternative search behavior: Random turn direction
             # import random
@@ -155,9 +179,9 @@ class ColourChaser(Node):
             increment = self.laser_scan.angle_increment
             middle = (rangeMin+rangeMax) /2
             forward_index = int((middle - rangeMin) / increment)
-            print(forward_index) 
-            middleValue = self.laser_scan.ranges[forward_index]
-            print(middleValue)
+            # print(forward_index) 
+            self.middleValue = self.laser_scan.ranges[forward_index]
+            # print(self.middleValue)
 
                
 
