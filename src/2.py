@@ -1,129 +1,129 @@
-#!/usr/bin/env python3
-"""
-LIMO 360° Green Cube Scanner
-- Completes full rotation while detecting objects
-- Only reports green cubes that meet shape criteria
-- Outputs final report with angles of detection
-"""
+#!/usr/bin/env python
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import Image, Imu
+from sensor_msgs.msg import Image
+from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from collections import defaultdict
+import math
+from threading import Lock
 
-class CubeScanner(Node):
+class ColourChaser(Node):
     def __init__(self):
-        super().__init__('cube_scanner')
+        super().__init__('colour_chaser')
         
-        # === Configuration ===
-        self.scan_speed = 0.5  # rad/s rotation speed
-        self.target_color_low = np.array([40, 50, 50])   # HSV green range
-        self.target_color_high = np.array([80, 255, 255])
-        self.min_cube_area = 1000  # minimum pixels to qualify as cube
-        self.aspect_ratio_range = (0.8, 1.2)  # width/height for cubes
+        self.turn_vel = 0.0
+        self.forward_vel = 0.0
+        self.pub_cmd_vel = self.create_publisher(Twist, 'cmd_vel', 10)
         
-        # === Tracking Variables ===
-        self.current_angle = 0.0
-        self.start_angle = None
-        self.scan_complete = False
-        self.detected_cubes = defaultdict(list)  # {angle: [cube_data]}
+        timer_period = 0.1
+        self.timer = self.create_timer(timer_period, self.timer_callback)
         
-        # === ROS Setup ===
-        self.bridge = CvBridge()
-        self.cmd_vel_pub = self.create_publisher(Twist, 'cmd_vel', 10)
+        self.create_subscription(Image, '/limo/depth_camera_link/image_raw', self.camera_callback, 10)
+        self.create_subscription(LaserScan, '/scan', self.laser_scan_callback, 10)
         
-        # Subscribers
-        self.create_subscription(Image, '/limo/depth_camera_link/image_raw', 
-                               self.camera_callback, 10)
-        self.create_subscription(Imu, '/imu/data', self.imu_callback, 10)
-        
-        # Start continuous rotation
-        self.start_rotation()
+        self.br = CvBridge()
+        self.forward_range_value = None
+        self.initial_distance = None
+        self.laser_scan = None
+        self.middleValue = None
+        self.initial_distance = None
+        self.key = True
+        self.lock = Lock()
+        self.horFlip = False    
 
-    def start_rotation(self):
-        """Begin continuous rotation"""
-        twist = Twist()
-        twist.angular.z = self.scan_speed
-        self.cmd_vel_pub.publish(twist)
-        self.start_angle = self.current_angle
-        self.get_logger().info("Starting 360° scan for green cubes...")
+    def camera_callback(self, data):
+        current_frame = self.br.imgmsg_to_cv2(data, desired_encoding='bgr8')
+        current_frame_hsv = cv2.cvtColor(current_frame, cv2.COLOR_BGR2HSV)
+        current_frame_mask = cv2.inRange(current_frame_hsv, (0, 150, 50), (255, 255, 255))
+        contours, _ = cv2.findContours(current_frame_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-    def imu_callback(self, msg):
-        """Track rotation angle using IMU data"""
-        # Simple integration - replace with proper quaternion conversion in real use
-        self.current_angle += msg.angular_velocity.z * 0.1  # dt ≈ 0.1
-        
-        # Normalize angle and check for full rotation
-        normalized_angle = self.current_angle % (2*np.pi)
-        if not self.scan_complete and abs(normalized_angle - self.start_angle) < 0.1 and len(self.detected_cubes) > 0:
-            self.complete_scan()
+        top_contours = []
+        bottom_contours = []
 
-    def camera_callback(self, msg):
-        """Detect and record green cubes"""
-        if self.scan_complete:
-            return
-            
-        try:
-            frame = self.bridge.imgmsg_to_cv2(msg, 'bgr8')
-            hsv = cv2.cvtColor(frame, cv2.COLOR_BGR2HSV)
-            
-            # Create mask for green color
-            mask = cv2.inRange(hsv, self.target_color_low, self.target_color_high)
-            contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-            
-            for contour in contours:
-                area = cv2.contourArea(contour)
-                if area > self.min_cube_area:
-                    # Check if shape is cube-like
-                    rect = cv2.minAreaRect(contour)
-                    width, height = rect[1]
-                    aspect_ratio = max(width, height) / min(width, height)
-                    
-                    if self.aspect_ratio_range[0] <= aspect_ratio <= self.aspect_ratio_range[1]:
-                        # Valid cube detected
-                        angle = self.current_angle % (2*np.pi)
-                        self.detected_cubes[angle].append({
-                            'angle_deg': np.degrees(angle),
-                            'area': area,
-                            'contour': contour
-                        })
-                        
-                        # Visual feedback (no pausing)
-                        cv2.drawContours(frame, [contour], -1, (0,255,0), 2)
-                        cv2.putText(frame, f"Cube @ {np.degrees(angle):.1f}°",
-                                  (30, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0,255,0), 2)
-            
-            cv2.imshow("Cube Scanner", frame)
-            cv2.waitKey(1)
-            
-        except Exception as e:
-            self.get_logger().error(f"Detection error: {str(e)}")
+        for contour in contours:
+            M = cv2.moments(contour)
+            if M['m00'] > 0:
+                cy = int(M['m01'] / M['m00'])
+                if cy < data.height / 2:
+                    top_contours.append(contour)
+                else:
+                    bottom_contours.append(contour)
 
-    def complete_scan(self):
-        """Stop rotation and report findings"""
-        self.scan_complete = True
-        self.cmd_vel_pub.publish(Twist())  # Stop robot
-        
-        self.get_logger().info("\n=== SCAN COMPLETE ===")
-        self.get_logger().info(f"Detected {sum(len(v) for v in self.detected_cubes.values())} green cubes:")
-        
-        for angle, cubes in sorted(self.detected_cubes.items()):
-            for i, cube in enumerate(cubes):
-                self.get_logger().info(
-                    f"Cube {i+1} at {cube['angle_deg']:.1f}° (Size: {cube['area']} px)")
-        
-        cv2.destroyAllWindows()
-        rclpy.shutdown()
+        top_contours = sorted(top_contours, key=cv2.contourArea, reverse=True)[:1]
+        bottom_contours = sorted(bottom_contours, key=cv2.contourArea, reverse=True)[:1]
+
+        self.turn_vel = 0.0
+        self.forward_vel = 0.0
+
+        for contour in top_contours:
+            M = cv2.moments(contour)
+            if M['m00'] > 0:
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
+                cv2.circle(current_frame, (cx, cy), 5, (255, 0, 0), -1)
+
+        if len(bottom_contours) > 0:
+            M = cv2.moments(bottom_contours[0])
+            if M['m00'] > 0:
+                cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
+                cv2.circle(current_frame, (cx, cy), 5, (0, 255, 0), -1)
+                
+                if cy >= data.height / 2:
+                    if cx < data.width / 3:
+                        self.turn_vel = 0.3
+                    elif cx >= 2 * data.width / 3:
+                        self.turn_vel = -0.3
+                    else:
+                        self.turn_vel = 0.0
+                        self.forward_vel = 0.1
+        else:
+            with self.lock:
+                if self.key == True:
+                    self.initial_distance = self.middleValue
+                    print("in")
+                    self.key = False
+                print("out")
+                cubeDistance = self.initial_distance - self.middleValue
+                print(cubeDistance)
+                if cubeDistance < 0.2:
+                    self.forward_vel = 0.1  
+                else:
+                    self.forward_vel = -0.2
+                self.key = True
+
+        current_frame_contours = cv2.drawContours(current_frame, contours, 0, (255, 255, 0), 3)
+        cv2.imshow("Image window", cv2.resize(current_frame_contours, (0, 0), fx=0.4, fy=0.4))
+        cv2.waitKey(1)
+
+    def laser_scan_callback(self, data):
+        self.laser_scan = data
+        if self.laser_scan is not None:
+            rangeMin = self.laser_scan.angle_min
+            rangeMax = self.laser_scan.angle_max
+            increment = self.laser_scan.angle_increment
+            middle = (rangeMin + rangeMax) / 2
+            forward_index = int((middle - rangeMin) / increment)
+            self.middleValue = self.laser_scan.ranges[forward_index]
+
+    def timer_callback(self):
+        self.tw = Twist()
+        self.tw.linear.x = self.forward_vel
+        self.tw.angular.z = self.turn_vel
+        self.pub_cmd_vel.publish(self.tw)
 
 def main(args=None):
+    print('Starting colour_chaser.py.')
+    cv2.startWindowThread()
     rclpy.init(args=args)
-    scanner = CubeScanner()
-    rclpy.spin(scanner)
-    scanner.destroy_node()
+    colour_chaser = ColourChaser()
+    rclpy.spin(colour_chaser)
+    colour_chaser.destroy_node()
+    rclpy.shutdown()
 
 if __name__ == '__main__':
     main()

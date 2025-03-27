@@ -48,15 +48,11 @@ class ColourChaser(Node):
 
         self.laser_scan = None #initialize laser_scan
         self.middleValue = None
-        self.initial_distance= None
-        
+        self.initial_distance= None        
         self.key=True
-        self.lock = Lock()
-
-        
-
-
-        
+        self.lock = Lock()     
+        self.chaseMode = False
+        self.frontAvoidRange= None
 
 
     # Callback function triggered when a new image is received from the camera topic
@@ -77,21 +73,49 @@ class ColourChaser(Node):
         # cv2.CHAIN_APPROX_SIMPLE compresses horizontal/vertical segments into endpoints
         contours, _ = cv2.findContours(current_frame_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        # Sort contours by area (largest first) and take the top 1
-        contours = sorted(contours, key=cv2.contourArea, reverse=False)[:1]
+        # Get ALL contours sorted by area (largest first)
+        contours = sorted(contours, key=cv2.contourArea, reverse=True)  # Fixed: reverse=True
+
+        image_center_y = current_frame_hsv.shape[0] // 2  # Your existing correct definition
+        bottom_contours = []
+        top_contours = []
+
+        for contour in contours:
+            M = cv2.moments(contour)
+            if M['m00'] > 0:
+                cy = int(M['m01'] / M['m00'])
+                if cy > image_center_y:
+                    bottom_contours.append(contour)
+                else:
+                    top_contours.append(contour)
+
+
+        # Now use bottom_contours[0] if it exists
 
         # Reset velocities to default (stop) before processing
         self.turn_vel = 0.0
+        self.forward_vel = 0.0          
         self.forward_vel = 0.0  
 
+        if len(top_contours) > 0:
+            T = cv2.moments(top_contours[0])
+            if T['m00'] > 0:
+                tx = int(T['m10'] / T['m00'])
+                ty = int(T['m01'] / T['m00'])
+                top_color = current_frame[ty, tx]  # BGR color of top object
+                print(f"Top object color (BGR): {top_color}")
+
+
         # Check if any contours were found
-        if len(contours) > 0:
+        if len(bottom_contours) > 0:
             # Calculate moments of the largest contour to find its centroid
-            M = cv2.moments(contours[0])
+            M = cv2.moments(bottom_contours[0])
             if M['m00'] > 0:  # m00 is the contour area; ensure it's not zero to avoid division errors
                 # Compute centroid coordinates (x, y)
                 cx = int(M['m10'] / M['m00'])  # x-coordinate of centroid
                 cy = int(M['m01'] / M['m00'])  # y-coordinate of centroid
+                bottom_color = current_frame[cy, cx]  # BGR color of top object
+                print(f"Bottom object color (BGR): {bottom_color}")
 
                 # Draw a green circle at the centroid on the original image
                 # Arguments: image, center (x, y), radius, color (B, G, R), thickness (-1 fills the circle)
@@ -104,64 +128,14 @@ class ColourChaser(Node):
                     self.turn_vel = -0.3  # Turn right (negative angular velocity)
                 else:  # Object is in the center third
                     self.turn_vel = 0.0  # Stop turning
-                    self.forward_vel = 0.1  # Move forward slightly
-
-                # Alternative centering logic with proportional control (P-controller)
-                # center_x = data.width / 2
-                # error = (cx - center_x) / center_x  # Normalized error (-1 to 1)
-                # self.turn_vel = -0.5 * error  # Proportional turn speed (faster when farther)
-
-                # Moving forward logic based on contour area (commented out in original)
-                # area = cv2.contourArea(contours[0])  # Calculate area of the contour
-                # target_area = 50000  # Desired area when object is "close enough"
-                # if area < target_area:os
-                #     self.forward_vel = 0.1  # Move forward if object is too small (far away)
-                # else:
-                #     self.forward_vel = 0.0  # Stop if object is large enough (close enough)
-
-                # Alternative forward logic with proportional control
-                # max_area = 100000  # Maximum area when too close
-                # if area < target_area:
-                #     self.forward_vel = 0.2 * (target_area - area) / target_area  # Scale speed
-                # elif area > max_area:
-                #     self.forward_vel = -0.1  # Back up if too close
-                # else:
-                #     self.forward_vel = 0.0
-
+                    if all(distance > 0.3 for distance in self.frontAvoidRange):
+                        self.forward_vel = 0.2 # Move forward slightly
         else:
-            # No contours detected: Rotate to search for the object
-            
-
-            # print(self.forward_range_value)         
-        
-            # # self.turn_vel = 0.3  # Turn left to scan
-            # with self.lock:                        
-            #     if self.key == True:
-            #         self.initial_distance = self.middleValue
-            #         # print(self.initial_distance)
-            #         # print(self.middleValue)
-            #         print("in")
-            #         self.key = False
-            #     print("out")
-            #     # print(self.initial_distance)
-            #     cubeDistance = self.initial_distance - self.middleValue
-            #     print(cubeDistance)
-            #     if cubeDistance < 0.2:
-
-            #         self.forward_vel = 0.1  
-                
-                self.forward_vel = -0.2
-
-                # self.key = True
-                
-
-            # Alternative search behavior: Random turn direction
-            # import random
-            # self.turn_vel = random.choice([0.3, -0.3])  # Randomly turn left or right
+            self.turn_vel = 0.3
 
         # Draw the largest contour on the original image in yellow
         # Arguments: image, contours list, contour index (0), color (B, G, R), thickness
-        current_frame_contours = cv2.drawContours(current_frame, contours, 0, (255, 255, 0), 3)
+        current_frame_contours = cv2.drawContours(current_frame, bottom_contours, 0, (255, 255, 0), 3)
 
         # Display the processed image in a window
         # Resize the image to 40% of its original size for better visibility
@@ -181,9 +155,9 @@ class ColourChaser(Node):
             forward_index = int((middle - rangeMin) / increment)
             # print(forward_index) 
             self.middleValue = self.laser_scan.ranges[forward_index]
-            # print(self.middleValue)
-
-               
+            self.frontAvoidRange = self.laser_scan.ranges[forward_index-15:forward_index+15]
+            # print(self.frontAvoidRange)
+            # print(self.middleValue)          
 
 
     # Timer callback to periodically publish velocity commands
@@ -219,3 +193,54 @@ def main(args=None):
 # Entry point of the script
 if __name__ == '__main__':
     main()  # Call the main function if this script is run directly
+
+    
+        #     # No contours detected: Rotate to search for the object            
+        #     print(self.forward_range_value)                 
+        #     # self.turn_vel = 0.3  # Turn left to scan
+        #     with self.lock:                        
+        #         if self.key == True:
+        #             self.initial_distance = self.middleValue
+        #             print(self.initial_distance)
+        #             print(self.middleValue)
+        #             print("in")
+        #             self.key = False
+        #         print("out")
+        #         # print(self.initial_distance)
+        #         cubeDistance = self.initial_distance - self.middleValue
+        #         print(cubeDistance)
+        #         print("middle",self.middleValue)
+        #         if cubeDistance < 0.2 or self.middleValue > 0.3:
+        #             self.forward_vel = 0.1    
+        #         else:
+        #             print("not yet")
+                               
+
+                # self.key = True       
+
+                # Alternative centering logic with proportional control (P-controller)
+                # center_x = data.width / 2
+                # error = (cx - center_x) / center_x  # Normalized error (-1 to 1)
+                # self.turn_vel = -0.5 * error  # Proportional turn speed (faster when farther)
+
+                # Moving forward logic based on contour area (commented out in original)
+                # area = cv2.contourArea(contours[0])  # Calculate area of the contour
+                # target_area = 50000  # Desired area when object is "close enough"
+                # if area < target_area:os
+                #     self.forward_vel = 0.1  # Move forward if object is too small (far away)
+                # else:
+                #     self.forward_vel = 0.0  # Stop if object is large enough (close enough)
+
+                # Alternative forward logic with proportional control
+                # max_area = 100000  # Maximum area when too close
+                # if area < target_area:
+                #     self.forward_vel = 0.2 * (target_area - area) / target_area  # Scale speed
+                # elif area > max_area:
+                #     self.forward_vel = -0.1  # Back up if too close
+                # else:
+                #     self.forward_vel = 0.0
+                
+
+            # Alternative search behavior: Random turn direction
+            # import random
+            # self.turn_vel = random.choice([0.3, -0.3])  # Randomly turn left or right
