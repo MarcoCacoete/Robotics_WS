@@ -22,7 +22,7 @@ class ColourChaser(Node):
         self.create_subscription(LaserScan, '/scan', self.laser_scan_callback, 10)
         self.br = CvBridge()
         self.frontAvoidRange = None
-        self.avoid_distance = 0.25  # Stop when obstacle is within 0.3 meters
+        self.avoid_distance = 0.30  # Stop when obstacle is within 0.3 meters
 
         # Simplified state variables
         self.state = "SEARCHING"  # or "PUSHING"
@@ -63,7 +63,7 @@ class ColourChaser(Node):
                 tx = int(T['m10'] / T['m00'])
                 ty = int(T['m01'] / T['m00'])
                 self.top_color = np.array(current_frame[ty, tx])  # Force NumPy array
-                print(f"Upper color (BGR): {self.top_color}")
+                # print(f"Upper color (BGR): {self.top_color}")
 
 
         if len(bottom_contours) > 0:
@@ -73,9 +73,18 @@ class ColourChaser(Node):
                 cx = int(M['m10'] / M['m00'])
                 cy = int(M['m01'] / M['m00'])  # y-coordinate of centroid
                 self.bottom_color = np.array(current_frame[cy, cx])  # Force NumPy array
-                print(f"Lower color (BGR): {self.bottom_color}")
+                # print(f"Lower color (BGR): {self.bottom_color}")
                 # Check if target is centered (within middle 1/3 of image)
                 self.target_centered = (data.width / 3 <= cx <= 2 * data.width / 3)
+                # print("Area",cv2.contourArea(bottom_contours[0]))
+                self.targetArea =cv2.contourArea(bottom_contours[0])
+                print("Area", self.targetArea)
+
+                # Get bounding rectangle to find width/height
+                x, y, w, h = cv2.boundingRect(bottom_contours[0])
+                print(f"Contour width: {w}, height: {h}")
+                
+
         else:
             self.target_in_view = False
             self.target_centered = False
@@ -88,6 +97,7 @@ class ColourChaser(Node):
 
         cv2.imshow("Image window", cv2.resize(current_frame_contours, (0, 0), fx=0.4, fy=0.4))
         cv2.waitKey(1)
+
     def timer_callback(self):     
         if self.laser_scan is None:  # Check if laser data is available
             self.forward_vel = 0.0
@@ -108,25 +118,30 @@ class ColourChaser(Node):
             self.forward_vel = 0.0  # Stop moving forward         
             self.turn_vel = 0.3  # Increased turn speed
             self.state = "SEARCHING"
-            print(self.state)
+            # print(self.state)
         elif self.state == "SEARCHING":
-            if self.target_in_view and self.target_centered: # and (self.bottom_color == self.top_color).all():
+            if self.target_in_view and self.target_centered and self.targetArea > 300:
+            #     and self.top_color is not None 
+            #     and self.bottom_color is not None 
+            #     and (
+            #         (self.top_color[1] > 100 and self.bottom_color[1] > 100) 
+            #         or (self.top_color[2] > 200 and self.bottom_color[2] > 200)
+            #     )
+            # ):
                 self.state = "PUSHING"
-                print(self.state)
             else:
                 self.forward_vel = 0.0
-                print("Small Search")
-                self.turn_vel = 0.3  # Add small turn to keep searching
+                self.turn_vel = 0.3
         elif self.state == "PUSHING":
             # Check for obstacles even while pushing
             if min(self.frontAvoidRange) < self.avoid_distance:  # Closer threshold while pushing
                 self.state = "SEARCHING"  # Switch back to searching if too close
                 self.forward_vel = 0.0
-                print(self.state)
+                # print(self.state)
             else:
                 self.forward_vel = 0.2
                 self.turn_vel = 0.0
-            print(self.state)
+            # print(self.state)
 
         self.tw = Twist()
         self.tw.linear.x = self.forward_vel
