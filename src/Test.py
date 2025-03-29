@@ -66,7 +66,7 @@ class ColourChaser(Node):
             if M['m00'] > 0:
                 cy = int(M['m01'] / M['m00'])
                 self.contourArea = cv2.contourArea(contour)
-                if cy > image_center_y and cy < image_center_y + offset_y and self.contourArea > 200:
+                if cy > image_center_y and cy < image_center_y + offset_y and self.contourArea > 200 and self.contourArea<600 :
                     self.bottom_contours.append(contour)
                 else:
                     top_contours.append(contour)
@@ -154,7 +154,6 @@ class ColourChaser(Node):
                         or 
                         (self.bottom_color[2] == 102 and self.top_color[2] > 200)))):  # Red condition
                 self.state = "PUSHING"
-                self.stateCounter=0
             else:
                 if self.turnCounter == 0:
                     if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
@@ -175,21 +174,30 @@ class ColourChaser(Node):
                 else:
                     self.turnCounter=0
         elif self.state == "PUSHING":
-            # Check for obstacles even while pushing
-            if min(self.AvoidRange) < self.avoid_distance:  # Closer threshold while pushing
-                self.state = "SEARCHING"  # Switch back to searching if too close
-                self.forward_vel = 0.0
-                # print(self.state)
-            else:
-                self.forward_vel = 0.2
-                self.turn_vel = 0.0
+            self.stateCounter=0
+            
+            # # Check for obstacles even while pushing
+            # if min(self.AvoidRange) < self.avoid_distance:  # Closer threshold while pushing
+            #     self.state = "SEARCHING"  # Switch back to searching if too close
+            #     self.forward_vel = 0.0
+            #     # print(self.state)
+            # else:
+            self.forward_vel = 0.2
+            self.turn_vel = 0.0
             print(self.state)
         elif self.state == "ROAMING":            
             print(self.state)
             self.stateCounter+=1
             if min(self.AvoidRange) > self.avoid_distance and self.contourArea < 200:
-                self.forward_vel=0.2
-        if self.state >10000:
+                if min(self.AvoidRange) > self.avoid_distance:
+                    self.turn_vel= self.turnDir
+                else:
+                    self.forward_vel=0.2
+                
+
+            
+        if self.stateCounter >10000:
+            print("All objects pushed.")
             rclpy.shutdown()  
             
 
