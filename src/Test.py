@@ -58,6 +58,7 @@ class ColourChaser(Node):
         #offset_y = current_frame_hsv.shape[0] // 3
         self.bottom_contours = []
         top_contour = None
+        self.top_color = None
         self.contourArea=0
 
         for contour in contours:
@@ -93,8 +94,6 @@ class ColourChaser(Node):
                     self.cx = int(M['m10'] / M['m00'])
                     cy = int(M['m01'] / M['m00'])
                     bottom_color = np.array(self.current_frame[cy, self.cx])
-                    print(f"Lower color (BGR) for contour: {bottom_color}")
-                   
                     
                     if (self.top_color is not None and
                         ((bottom_color[1] == 102 and self.top_color[1] == 102) or  # Green condition
@@ -103,9 +102,9 @@ class ColourChaser(Node):
                         self.bottom_color = bottom_color
                         self.targetArea = cv2.contourArea(contour)
 
-                        print("Matched contour area:", self.targetArea)
+                        # print("Matched contour area:", self.targetArea)
                         x, y, w, h = cv2.boundingRect(contour)
-                        print(f"Matched contour width: {w}, height: {h}")          
+                        # print(f"Matched contour width: {w}, height: {h}")          
                         self.target_centered =True
                         # if self.cx<data.width / 3:
                         #     self.forward_vel=0
@@ -128,7 +127,9 @@ class ColourChaser(Node):
         cv2.waitKey(1)
     
     def timer_callback(self):
-        print(f"Top color (BGR) for contour: {self.top_color}")
+        print(f"Top color (BGR) for contour:    {self.top_color}")
+        print(f"Bottom color (BGR) for contour: {self.bottom_color}")
+
 
         print("Turn counter: ",self.turnCounter)
 
@@ -150,11 +151,9 @@ class ColourChaser(Node):
             self.forward_vel = 0.0  
             if self.turnCounter == 0:
                 if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
-                    self.turnDirLock=True
                     self.turnDir =0.3
                     self.turnCounter+=1
                 else:
-                    self.turnDirLock=True
                     self.turnDir =-0.3
                     self.turnCounter+=1
             if self.turnCounter<500:
@@ -164,8 +163,12 @@ class ColourChaser(Node):
                     print("Turning left")
                 else:
                     print("Turning Right")
+        elif min(self.AvoidRangeNarrow)> self.avoid_distance and self.turnCounter>500:
+                self.forward_vel=0.2
+                self.turnCounter = 0
         else:
             if self.target_centered:
+                self.turnCounter = 0
                 if self.cx>self.current_frame.shape[1] / 3:
                     self.turn_vel= -0.3
                     self.forward_vel=0.2
@@ -212,6 +215,7 @@ class ColourChaser(Node):
             # Define a narrower front range (e.g., ±45° from center)
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
+            self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+30:forward_index-30:-1] 
             self.AvoidRange = self.laser_scan.ranges[forward_index+50:forward_index-50:-1]            
             self.avoidLeft = self.laser_scan.ranges[forward_index:]
             self.avoidRight = self.laser_scan.ranges[:forward_index]
