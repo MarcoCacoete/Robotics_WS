@@ -37,7 +37,10 @@ class ColourChaser(Node):
         self.rightMeanAvoid = None
         self.contourArea=None
         self.pushCounter =0
+        self.pushBack =False
         self.centered = False
+        self.state = None
+
 
 
     def camera_callback(self, data):
@@ -129,10 +132,8 @@ class ColourChaser(Node):
     def timer_callback(self):
         print(f"Top color (BGR) for contour:    {self.top_color}")
         print(f"Bottom color (BGR) for contour: {self.bottom_color}")
-
-
-        print("Turn counter: ",self.turnCounter)
-
+        
+        self.stateCounter+=1
         if self.laser_scan is None:  
             self.forward_vel = 0.0
             self.turn_vel = 0.0
@@ -142,12 +143,15 @@ class ColourChaser(Node):
         if self.AvoidRange is not None:
             # print("Obstacle distance: ",self.avoid_distance)
             min_distance = min(self.AvoidRange)
+            fullRangeObstacle = min(self.fullRange)
             # print("Minimum distance: ",min_distance)
+            print(f"Turn counter: {self.turnCounter} State counter: {self.stateCounter} State: {self.state} Closest Obstacle: {fullRangeObstacle:.2f} Backup counter {self.pushCounter}")
+
 
             if min_distance < self.avoid_distance:
                 obstacle_detected = True
-                print(f"Obstacle detected! Min distance: {min_distance:.2f}m")        
-        if obstacle_detected:            
+        if obstacle_detected:  
+            self.state= "Avoiding obstacle."          
             self.forward_vel = 0.0  
             if self.turnCounter == 0:
                 if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
@@ -163,43 +167,68 @@ class ColourChaser(Node):
                     print("Turning left")
                 else:
                     print("Turning Right")
-        elif min(self.AvoidRangeNarrow)> self.avoid_distance and self.turnCounter>500:
-                self.forward_vel=0.2
-                self.turnCounter = 0
-        else:
-            if self.target_centered:
-                self.turnCounter = 0
-                if self.cx>self.current_frame.shape[1] / 3:
-                    self.turn_vel= -0.3
-                    self.forward_vel=0.2
-                    # print("Adjusting")                   
-                elif self.cx<2 * self.current_frame.shape[1] / 3:
-                    self.turn_vel= 0.3
-                    self.forward_vel=0.2
-                    # print("Adjusting")
-                else:
-                    self.forward_vel=0.2
             else:
-                # print(self.turnCounter)
-                if self.turnCounter == 0:
-                    if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
-                        self.turnDirLock=True
-                        self.turnDir =0.3
-                        self.turnCounter+=1
+                self.turnCounter=0
+        elif self.stateCounter>1000:
+                self.state="Roaming"
+                self.stateCounter+=1
+                if min(self.AvoidRangeNarrow)> self.avoid_distance:
+                    if self.cx<self.current_frame.shape[1] / 3:
+                        self.turn_vel= -0.3
+                        self.forward_vel=0.1
+                    elif self.cx>2 * self.current_frame.shape[1] / 3:
+                        self.turn_vel= 0.3
+                        self.forward_vel=0.1
                     else:
-                        self.turnDirLock=True
-                        self.turnDir =-0.3
-                        self.turnCounter+=1
-                if self.turnCounter<500:
-                    self.turn_vel= self.turnDir
+                        self.turn_vel= 0.0
+                        self.forward_vel=0.2
+                self.turnCounter = 0
+                if self.stateCounter > 3000:
+                    self.stateCounter=0
+        elif self.target_centered:            
+            self.state="Pushing"
+            self.pushCounter+=1
+            self.turnCounter = 0
+            self.stateCounter= 0
+            # self.pushBack = True
+            if self.pushCounter>50:
+                self.turn_vel = 0.0
+                self.forward_vel=-0.2     
+                if self.pushCounter>70:
+                    self.pushCounter=0  
+            elif self.cx>self.current_frame.shape[1] / 3:
+                self.turn_vel= -0.5
+                self.forward_vel=0.2
+            elif self.cx<2 * self.current_frame.shape[1] / 3:
+                self.turn_vel= 0.5
+                self.forward_vel=0.2
+            else:
+                self.turn_vel= 0.0
+                self.forward_vel=0.2
+        else:
+            self.pushCounter=0
+            # if self.pushBack ==False:
+            self.state="Searching"
+            if self.turnCounter == 0:
+                self.forward_vel=0.0
+                if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
+                    self.turnDir =0.3
                     self.turnCounter+=1
-                    # if self.turnDir==0.3:
-                    #     print("Turning left")
-                    # else:
-                    #     print("Turning Right")
                 else:
-                    self.turnCounter=0 
-
+                    self.turnDir =-0.3
+                    self.turnCounter+=1
+            if self.turnCounter<500:
+                self.turn_vel= self.turnDir
+                self.turnCounter+=1                    
+            else:
+                self.turnCounter=0
+            # else:
+            #     self.turn_vel=0.0
+            #     self.forward_vel=-0.2
+            #     self.pushCounter+=1
+            #     if self.pushCounter>10:
+            #         self.pushBack =False
+            #         self.pushCounter=0
 
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)

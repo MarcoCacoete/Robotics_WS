@@ -24,3 +24,8 @@ Plan:
 To make sure block is still being pushed, pull robot back some distance when block goes out of sight, then push once more for x distance.
 * if a block is in sight, and on obstacles in its path, head for the object, use lidar range at certain angles to create cone to detect obstacles. Avoid them by re adjusting location.
 * If no blocks are initially visible, rotate 360. If none are still visible advance to close to a wall or obstacle, rotate to keep parallel with object, navigate around object, keeping distance to it in same range, until the conditions above are present.
+
+
+ ros2 launch uol_tidybot tidybot.launch.py world:=level_2_3.world
+ ros2 run  uol_tidybot generate_objects --ros-args -p red:=false -p n_objects:=5
+ ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=5
