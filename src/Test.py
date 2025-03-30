@@ -21,12 +21,11 @@ class ColourChaser(Node):
         self.create_subscription(Image, '/limo/depth_camera_link/image_raw', self.camera_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.laser_scan_callback, 10)
         self.br = CvBridge()
-        self.AvoidRange = None
-        self.avoid_distance = 0.30  # Stop when obstacle is within 0.3 meters
-        self.stateCounter = 0
 
-        # Simplified state variables
-        self.state = "SEARCHING"  # or "PUSHING"
+        self.AvoidRange = None
+        self.avoid_distance = 0.20  
+        self.stateCounter = 0
+        self.state = "SEARCHING"  
         self.target_in_view = False
         self.target_centered = False
         self.laser_scan = None
@@ -37,11 +36,13 @@ class ColourChaser(Node):
         self.leftMeanAvoid = None  
         self.rightMeanAvoid = None
         self.contourArea=None
+        self.pushCounter =0
+        self.centered = False
 
 
     def camera_callback(self, data):
-        current_frame = self.br.imgmsg_to_cv2(data, desired_encoding='bgr8')
-        current_frame_hsv = cv2.cvtColor(current_frame, cv2.COLOR_BGR2HSV)
+        self.current_frame = self.br.imgmsg_to_cv2(data, desired_encoding='bgr8')
+        current_frame_hsv = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2HSV)
 
         # Define color-specific masks
         red_lower1 = cv2.inRange(current_frame_hsv, (0, 100, 50), (10, 255, 255))
@@ -49,112 +50,134 @@ class ColourChaser(Node):
         red_mask = red_lower1 + red_lower2
         green_mask = cv2.inRange(current_frame_hsv, (40, 100, 50), (80, 255, 255))
         
-        # Combine for general detection
         current_frame_mask = red_mask + green_mask
         contours, _ = cv2.findContours(current_frame_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        contours = sorted(contours, key=cv2.contourArea, reverse=True)
+        #contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
         image_center_y = current_frame_hsv.shape[0] // 2
-        offset_y = current_frame_hsv.shape[0] // 3
+        #offset_y = current_frame_hsv.shape[0] // 3
         self.bottom_contours = []
-        top_contours = []
+        top_contour = None
         self.contourArea=0
 
-        # Separate contours into top and bottom
         for contour in contours:
             M = cv2.moments(contour)
             if M['m00'] > 0:
                 cy = int(M['m01'] / M['m00'])
                 self.contourArea = cv2.contourArea(contour)
-                if cy > image_center_y and cy < image_center_y + offset_y and self.contourArea > 200 and self.contourArea<600 :
+                if cy > image_center_y and  self.contourArea > 300:# and self.contourArea<1000:# :cy < image_center_y + offset_y and
                     self.bottom_contours.append(contour)
                 else:
-                    top_contours.append(contour)
+                    top_contour = contour
 
-        # Get top color from the largest top contour (if available)
-        if len(top_contours) > 0:
-            T = cv2.moments(top_contours[0])
-            if T['m00'] > 0:
-                tx = int(T['m10'] / T['m00'])
-                ty = int(T['m01'] / T['m00'])
-                self.top_color = np.array(current_frame[ty, tx])
-                # print(f"Upper color (BGR): {self.top_color}")
-        else:
-            self.top_color = None
+        if top_contour is not None:  # Explicit None check
+            try:
+                T = cv2.moments(top_contour)
+                if T['m00'] > 0:
+                    tx = int(T['m10'] / T['m00'])
+                    ty = int(T['m01'] / T['m00'])
+                    # Ensure coordinates are within image bounds
+                    if 0 <= tx < self.current_frame.shape[1] and 0 <= ty < self.current_frame.shape[0]:
+                        self.top_color = np.array(self.current_frame[ty, tx])
+            except Exception as e:
+                self.get_logger().warn(f"Error processing top contour: {str(e)}")
 
-        # Check all bottom contours for a color match with the top color
         self.target_in_view = False
         self.target_centered = False
-        matched_bottom_contour = None
+        self.bottom_color =None
 
-        if len(self.bottom_contours) > 0:  # Assuming 'custom_contours' was meant to be 'self.bottom_contours'
+        if len(self.bottom_contours) > 0:  
             for contour in self.bottom_contours:
                 M = cv2.moments(contour)
                 if M['m00'] > 0:
-                    cx = int(M['m10'] / M['m00'])
+                    self.cx = int(M['m10'] / M['m00'])
                     cy = int(M['m01'] / M['m00'])
-                    bottom_color = np.array(current_frame[cy, cx])
-                    # print(f"Lower color (BGR) for contour: {bottom_color}")
+                    bottom_color = np.array(self.current_frame[cy, self.cx])
+                    print(f"Lower color (BGR) for contour: {bottom_color}")
+                   
                     
-                    # Check if this bottom contour's color matches the top color
                     if (self.top_color is not None and
                         ((bottom_color[1] == 102 and self.top_color[1] == 102) or  # Green condition
                         (bottom_color[2] == 102 and self.top_color[2] > 200))):  # Red condition
                         self.target_in_view = True
                         self.bottom_color = bottom_color
                         self.targetArea = cv2.contourArea(contour)
-                        # print("Matched contour area:", self.targetArea)
-                        x, y, w, h = cv2.boundingRect(contour)
-                        # print(f"Matched contour width: {w}, height: {h}")
-                        
-                        # Check if this contour is centered
-                        self.target_centered = (data.width / 3 <= cx <= 2 * data.width / 3)
-                        matched_bottom_contour = contour
-                        break  # Exit loop once a match is found (optional, remove if you want to log all matches)
 
+                        print("Matched contour area:", self.targetArea)
+                        x, y, w, h = cv2.boundingRect(contour)
+                        print(f"Matched contour width: {w}, height: {h}")          
+                        self.target_centered =True
+                        # if self.cx<data.width / 3:
+                        #     self.forward_vel=0
+                        #     self.turn_vel= -0.3
+                        # elif self.cx>2 * data.width / 3:
+                        #     self.forward_vel=0
+                        #     self.turn_vel= 0.3
+                        # self.centered = ((data.width / 3) + 20 <= self.cx <= (2 * data.width / 3) - 20)
+                        # if self.centered == True:
+                        #     self.target_centered=self.centered
+                        # #     self.turn_vel= 0.0                   
+                    break 
         if not self.target_in_view:
             self.bottom_color = None
             self.target_centered = False
+            
 
-        # Draw contours
-        current_frame_contours = cv2.drawContours(current_frame, self.bottom_contours, -1, (255, 255, 0), 3)
+        current_frame_contours = cv2.drawContours(self.current_frame, self.bottom_contours, -1, (255, 255, 0), 3)
         cv2.imshow("Image window", cv2.resize(current_frame_contours, (0, 0), fx=0.4, fy=0.4))
         cv2.waitKey(1)
+    
+    def timer_callback(self):
+        print(f"Top color (BGR) for contour: {self.top_color}")
 
-    def timer_callback(self):     
-        if self.laser_scan is None:  # Check if laser data is available
+        print("Turn counter: ",self.turnCounter)
+
+        if self.laser_scan is None:  
             self.forward_vel = 0.0
             self.turn_vel = 0.0
             print("Waiting for laser data...")
-            return
-        print(f"State counter: {self.stateCounter}, Turn Counter: {self.turnCounter}, Left average space: {self.leftMeanAvoid:.2f}, Right average space: {self.rightMeanAvoid:.2f}, Dice Area: {self.contourArea}")
-
-        # Obstacle detection with better front range
+            return 
         obstacle_detected = False
         if self.AvoidRange is not None:
+            # print("Obstacle distance: ",self.avoid_distance)
             min_distance = min(self.AvoidRange)
+            # print("Minimum distance: ",min_distance)
+
             if min_distance < self.avoid_distance:
                 obstacle_detected = True
-                print(f"Obstacle detected! Min distance: {min_distance:.2f}m")
-        
-        if obstacle_detected:
-            # Stop forward motion and turn away
-            self.forward_vel = 0.0  # Stop moving forward         
-            self.state = "SEARCHING"
-
-        if self.state == "SEARCHING":
-            if self.stateCounter >500:
-                self.state= "ROAMING"
-            print(self.state)
-            self.stateCounter+=1
-            if (self.target_in_view 
-                and self.target_centered 
-                and ((self.bottom_color is not None and self.top_color is not None)  # Check colors exist
-                    and ((self.bottom_color[1] == 102 and self.top_color[1] == 102)  # Green condition
-                        or 
-                        (self.bottom_color[2] == 102 and self.top_color[2] > 200)))):  # Red condition
-                self.state = "PUSHING"
+                print(f"Obstacle detected! Min distance: {min_distance:.2f}m")        
+        if obstacle_detected:            
+            self.forward_vel = 0.0  
+            if self.turnCounter == 0:
+                if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
+                    self.turnDirLock=True
+                    self.turnDir =0.3
+                    self.turnCounter+=1
+                else:
+                    self.turnDirLock=True
+                    self.turnDir =-0.3
+                    self.turnCounter+=1
+            if self.turnCounter<500:
+                self.turn_vel= self.turnDir
+                self.turnCounter+=1
+                if self.turnDir==0.3:
+                    print("Turning left")
+                else:
+                    print("Turning Right")
+        else:
+            if self.target_centered:
+                if self.cx>self.current_frame.shape[1] / 3:
+                    self.turn_vel= -0.3
+                    self.forward_vel=0.2
+                    # print("Adjusting")                   
+                elif self.cx<2 * self.current_frame.shape[1] / 3:
+                    self.turn_vel= 0.3
+                    self.forward_vel=0.2
+                    # print("Adjusting")
+                else:
+                    self.forward_vel=0.2
             else:
+                # print(self.turnCounter)
                 if self.turnCounter == 0:
                     if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
                         self.turnDirLock=True
@@ -167,45 +190,16 @@ class ColourChaser(Node):
                 if self.turnCounter<500:
                     self.turn_vel= self.turnDir
                     self.turnCounter+=1
-                    if self.turnDir==0.3:
-                        print("Turning left")
-                    else:
-                        print("Turning Right")
+                    # if self.turnDir==0.3:
+                    #     print("Turning left")
+                    # else:
+                    #     print("Turning Right")
                 else:
-                    self.turnCounter=0
-        elif self.state == "PUSHING":
-            self.stateCounter=0
-            
-            # # Check for obstacles even while pushing
-            # if min(self.AvoidRange) < self.avoid_distance:  # Closer threshold while pushing
-            #     self.state = "SEARCHING"  # Switch back to searching if too close
-            #     self.forward_vel = 0.0
-            #     # print(self.state)
-            # else:
-            self.forward_vel = 0.2
-            self.turn_vel = 0.0
-            print(self.state)
-        elif self.state == "ROAMING":            
-            print(self.state)
-            self.stateCounter+=1
-            if min(self.AvoidRange) > self.avoid_distance and self.contourArea < 200:
-                if min(self.AvoidRange) > self.avoid_distance:
-                    self.turn_vel= self.turnDir
-                else:
-                    self.forward_vel=0.2
-                
+                    self.turnCounter=0 
 
-            
-        if self.stateCounter >10000:
-            print("All objects pushed.")
-            rclpy.shutdown()  
-            
-
-
-        
 
         self.tw = Twist()
-        self.tw.linear.x = self.forward_vel
+        self.tw.linear.x = float(self.forward_vel)
         self.tw.angular.z = self.turn_vel
         self.pub_cmd_vel.publish(self.tw)
 
@@ -218,7 +212,7 @@ class ColourChaser(Node):
             # Define a narrower front range (e.g., ±45° from center)
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
-            self.AvoidRange = self.laser_scan.ranges[forward_index+35:forward_index-35:-1]            
+            self.AvoidRange = self.laser_scan.ranges[forward_index+50:forward_index-50:-1]            
             self.avoidLeft = self.laser_scan.ranges[forward_index:]
             self.avoidRight = self.laser_scan.ranges[:forward_index]
             self.fullRange = self.laser_scan.ranges[:]
@@ -237,3 +231,130 @@ def main(args=None):
 
 if __name__ == '__main__':
     main()
+
+
+
+
+
+
+
+
+
+
+
+
+
+    # def timer_callback(self):     
+    #     if self.laser_scan is None:  # Check if laser data is available
+    #         self.forward_vel = 0.0
+    #         self.turn_vel = 0.0
+    #         print("Waiting for laser data...")
+    #         return
+    #     print(f"Push Counter: {self.pushCounter} State counter: {self.stateCounter}, Turn Counter: {self.turnCounter}, Left average space: {self.leftMeanAvoid:.2f}, Right average space: {self.rightMeanAvoid:.2f}, Dice Area: {self.contourArea}, Top colour: {self.top_color}, Bottom colour: {self.bottom_color}")
+
+    #     # Obstacle detection with better front range
+    #     obstacle_detected = False
+    #     if self.AvoidRange is not None:
+    #         min_distance = min(self.AvoidRange)
+    #         if min_distance < self.avoid_distance:
+    #             obstacle_detected = True
+    #             print(f"Obstacle detected! Min distance: {min_distance:.2f}m")
+        
+    #     if obstacle_detected:
+    #         # Stop forward motion and turn away
+    #         self.forward_vel = 0.0  # Stop moving forward 
+    #         if self.turnCounter == 0:
+    #             if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
+    #                 self.turnDirLock=True
+    #                 self.turnDir =0.3
+    #                 self.turnCounter+=1
+    #             else:
+    #                 self.turnDirLock=True
+    #                 self.turnDir =-0.3
+    #                 self.turnCounter+=1
+    #         if self.turnCounter<500:
+    #             self.turn_vel= self.turnDir
+    #             self.turnCounter+=1
+    #             if self.turnDir==0.3:
+    #                 print("Turning left")
+    #             else:
+    #                 print("Turning Right")
+    #         else:
+    #             self.turnCounter=0        
+    #         self.state = "SEARCHING"
+
+    #     if self.state == "SEARCHING":
+    #         self.forward_vel = 0.0
+    #         if self.stateCounter >500:
+    #             self.state= "ROAMING"
+    #         print(self.state)
+    #         self.stateCounter+=1
+    #         if (self.target_in_view 
+    #             and self.target_centered 
+    #             and ((self.bottom_color is not None and self.top_color is not None)  # Check colors exist
+    #                 and ((self.bottom_color[1] == 102 and self.top_color[1] == 102)  # Green condition
+    #                     or 
+    #                     (self.bottom_color[2] == 102 and self.top_color[2] > 200)))):  # Red condition
+    #             self.state = "PUSHING"
+    #         else:
+    #             if self.turnCounter == 0:
+    #                 if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
+    #                     self.turnDirLock=True
+    #                     self.turnDir =0.3
+    #                     self.turnCounter+=1
+    #                 else:
+    #                     self.turnDirLock=True
+    #                     self.turnDir =-0.3
+    #                     self.turnCounter+=1
+    #             if self.turnCounter<500:
+    #                 self.turn_vel= self.turnDir
+    #                 self.turnCounter+=1
+    #                 if self.turnDir==0.3:
+    #                     print("Turning left")
+    #                 else:
+    #                     print("Turning Right")
+    #             else:
+    #                 self.turnCounter=0
+    #     elif self.state == "PUSHING":
+    #         self.stateCounter=0
+    #         if ((self.bottom_color is not None and self.top_color is not None)  # Check colors exist
+    #                 and ((self.bottom_color[1] == 102 and self.top_color[1] == 102)  # Green condition
+    #                 or  (self.bottom_color[2] == 102 and self.top_color[2] > 200))):
+    #             print(self.bottom_color)
+    #             if self.cx>self.current_frame.shape[1] / 3:
+    #                 self.turn_vel= -0.3
+    #                 self.forward_vel=0.2
+    #                 print("Adjusting")                   
+    #             elif self.cx<2 * self.current_frame.shape[1] / 3:
+    #                 self.turn_vel= 0.3
+    #                 self.forward_vel=0.2
+    #                 print("Adjusting")
+    #             else:
+    #                 self.forward_vel=0.2
+    #                 print(self.state)
+    #         else:                
+    #             self.turn_vel = 0.0
+    #             self.pushCounter +=1
+    #             if self.pushCounter>200:
+    #                 self.state = "SEARCHING"
+    #                 self.pushCounter =0
+    #     elif self.state == "ROAMING":   
+    #         self.turnCounter=0         
+    #         print(self.state)
+    #         self.stateCounter+=1
+    #         if min(self.AvoidRange) > self.avoid_distance and self.contourArea < 200:
+    #             if self.cx<self.current_frame.shape[1] / 3:
+    #                 self.forward_vel=0.2
+    #                 self.turn_vel= -0.3
+    #             elif self.cx>2 * self.current_frame.shape[1] / 3:
+    #                 self.forward_vel=0.2
+    #                 self.turn_vel= 0.3
+    #             else:
+    #                 self.forward_vel=0.2   
+    #     else:
+    #         self.forward_vel=0.2
+
+            
+    #     if self.stateCounter >10000:
+    #         print("All objects pushed.")
+    #         rclpy.shutdown()  
