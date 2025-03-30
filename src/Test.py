@@ -38,6 +38,7 @@ class ColourChaser(Node):
         self.contourArea=None
         self.pushCounter =0
         self.pushBack =False
+        self.pushBackCounter =0
         self.centered = False
         self.state = None
 
@@ -130,8 +131,8 @@ class ColourChaser(Node):
         cv2.waitKey(1)
     
     def timer_callback(self):
-        print(f"Top color (BGR) for contour:    {self.top_color}")
-        print(f"Bottom color (BGR) for contour: {self.bottom_color}")
+        # print(f"Top color (BGR) for contour:    {self.top_color}")
+        # print(f"Bottom color (BGR) for contour: {self.bottom_color}")
         
         self.stateCounter+=1
         if self.laser_scan is None:  
@@ -145,8 +146,8 @@ class ColourChaser(Node):
             min_distance = min(self.AvoidRange)
             fullRangeObstacle = min(self.fullRange)
             # print("Minimum distance: ",min_distance)
-            print(f"Turn counter: {self.turnCounter} State counter: {self.stateCounter} State: {self.state} Closest Obstacle: {fullRangeObstacle:.2f} Backup counter {self.pushCounter}")
-
+            # print(f"Turn counter: {self.turnCounter} State counter: {self.stateCounter} State: {self.state} Closest Obstacle: {fullRangeObstacle:.2f} Backup counter {self.pushCounter}")
+            print(self.state)
 
             if min_distance < self.avoid_distance:
                 obstacle_detected = True
@@ -158,9 +159,11 @@ class ColourChaser(Node):
                     self.turnDir =0.3
                     self.turnCounter+=1
                 else:
+                    self.forward_vel = 0.0  
                     self.turnDir =-0.3
                     self.turnCounter+=1
             if self.turnCounter<500:
+                self.forward_vel = 0.0  
                 self.turn_vel= self.turnDir
                 self.turnCounter+=1
                 if self.turnDir==0.3:
@@ -187,29 +190,37 @@ class ColourChaser(Node):
                     self.stateCounter=0
         elif self.target_centered:            
             self.state="Pushing"
-            self.pushCounter+=1
+            self.pushBack = True
             self.turnCounter = 0
             self.stateCounter= 0
-            # self.pushBack = True
-            if self.pushCounter>50:
-                self.turn_vel = 0.0
-                self.forward_vel=-0.2     
-                if self.pushCounter>70:
-                    self.pushCounter=0  
-            elif self.cx>self.current_frame.shape[1] / 3:
+            if self.cx>self.current_frame.shape[1] / 3:
                 self.turn_vel= -0.5
-                self.forward_vel=0.2
+                self.forward_vel=0.1
             elif self.cx<2 * self.current_frame.shape[1] / 3:
                 self.turn_vel= 0.5
-                self.forward_vel=0.2
+                self.forward_vel=0.1
             else:
                 self.turn_vel= 0.0
                 self.forward_vel=0.2
         else:
-            self.pushCounter=0
-            # if self.pushBack ==False:
             self.state="Searching"
-            if self.turnCounter == 0:
+            if self.pushBack:
+                print("back",self.pushCounter)
+                print("push",self.pushBackCounter)
+                if self.pushCounter <20:
+                    self.forward_vel = 0.2
+                    self.pushCounter+=1
+                else:
+                    if self.pushBackCounter<20:
+                        self.turn_vel= 0.0
+                        self.forward_vel = -0.2    
+                        self.pushBackCounter+=1  
+                    else:
+                        self.turn_vel= 0.0
+                        self.pushCounter = 0
+                        self.pushBackCounter=0
+                        self.pushBack = False  
+            elif self.turnCounter == 0:
                 self.forward_vel=0.0
                 if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
                     self.turnDir =0.3
@@ -217,18 +228,12 @@ class ColourChaser(Node):
                 else:
                     self.turnDir =-0.3
                     self.turnCounter+=1
-            if self.turnCounter<500:
+            elif self.turnCounter<500:
                 self.turn_vel= self.turnDir
                 self.turnCounter+=1                    
             else:
                 self.turnCounter=0
-            # else:
-            #     self.turn_vel=0.0
-            #     self.forward_vel=-0.2
-            #     self.pushCounter+=1
-            #     if self.pushCounter>10:
-            #         self.pushBack =False
-            #         self.pushCounter=0
+            
 
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)
