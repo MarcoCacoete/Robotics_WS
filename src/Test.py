@@ -23,7 +23,7 @@ class ColourChaser(Node):
         self.br = CvBridge()
 
         self.AvoidRange = None
-        self.avoid_distance = 0.25  
+        self.avoid_distance = 0.15  
         self.stateCounter = 0
         self.state = "SEARCHING"  
         self.target_in_view = False
@@ -73,12 +73,12 @@ class ColourChaser(Node):
                 cy = int(M['m01'] / M['m00'])
                 self.contourArea = cv2.contourArea(contour)
                 
-                if cy > image_center_y and self.contourArea > 400:  
+                if cy > image_center_y and self.contourArea > 350:  
                     cx = int(M['m10'] / M['m00'])
                     distance_to_center = abs(cx - image_center_x)
                     self.bottom_contours.append((contour, distance_to_center))
                 else:
-                    if self.contourArea > 2600:
+                    if self.contourArea > 2400:
                         top_contour = contour
 
         if top_contour is not None:
@@ -93,7 +93,7 @@ class ColourChaser(Node):
                 self.get_logger().warn(f"Error processing top contour: {str(e)}")
 
         if self.bottom_contours:
-            self.bottom_contours.sort(key=lambda x: x[1])  )
+            self.bottom_contours.sort(key=lambda x: x[1])  
 
         self.target_in_view = False
         self.target_centered = False
@@ -155,7 +155,7 @@ class ColourChaser(Node):
         if self.bottom_contours is not None and blocks_in_front is not None:
          print(f"| Bottom contours count: {len(self.bottom_contours)} | Blocks in front: {blocks_in_front} |")
 
-        if proximityCheck or self.searchCounter<400:
+        if proximityCheck or self.searchCounter<250:
             self.state = "Searching" 
             self.searchCounter+=1
             self.wanderCounter=0
@@ -165,28 +165,39 @@ class ColourChaser(Node):
             self.wanderCounter+=1
             self.turn_vel= 0.0
             self.forward_vel = 0.2  
-            if self.searchCounter>400:
+            if self.searchCounter>250:
                 self.searchCounter=0
-        if self.target_centered:
-                self.searchCounter=400
-                self.turn_vel= 0.0          
-                self.state="Pushing"
-                self.pushBack = True
-                self.turnCounter = 0
-                self.stateCounter = 0
-                if self.cx>self.current_frame.shape[1] / 3:
-                    self.turn_vel= -0.3
-                    self.forward_vel=0.1
-                elif self.cx<2 * self.current_frame.shape[1] / 3:
-                    self.turn_vel= 0.3
-                    self.forward_vel=0.1
-                else:
-                    self.turn_vel= 0.0
-                    self.forward_vel=0.2
-        elif not blocks_in_front and self.state=="Pushing":
+        if self.target_centered and not proximityCheck :
+            self.pushCounter+=1
+            self.searchCounter=400
+            self.turn_vel= 0.0          
+            self.state="Pushing"
+            self.pushBack = True
+            self.turnCounter = 0
+            self.stateCounter = 0
+            if self.cx<self.current_frame.shape[1] / 3:
+                self.turn_vel= 0.2
+                self.forward_vel=0.1
+            elif self.cx>2 * self.current_frame.shape[1] / 3:
+                self.turn_vel= +0.2
+                self.forward_vel=0.1
+            else:
+                self.turn_vel= 0.0
+                self.forward_vel=0.1
+        elif not blocks_in_front and self.state=="Pushing" and self.pushCounter>30:
             print("Extra push.")
+            self.pushBackCounter=0
             self.turn_vel=0.0
-            self.forward_vel=0.3                   
+            self.forward_vel=0.3  
+            if blocks_in_front:
+                self.turn_vel=0.0
+                self.pushBackCounter+=1
+                if self.pushBackCounter<20:
+                    self.forward_vel=-0.2
+                else:
+                    self.state = "Wandering"
+                    self.turn_vel=0.0
+                    self.pushBackCounter=   0               
 
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)
@@ -201,7 +212,7 @@ class ColourChaser(Node):
             else:
                 self.forward_vel = 0.0  
                 self.turnDir =-0.3
-        if self.turnCounter<300:
+        if self.turnCounter<250:
             self.forward_vel = 0.0  
             self.turn_vel= self.turnDir
             self.turnCounter+=1
