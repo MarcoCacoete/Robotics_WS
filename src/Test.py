@@ -52,7 +52,6 @@ class ColourChaser(Node):
         self.current_frame = self.br.imgmsg_to_cv2(data, desired_encoding='bgr8')
         current_frame_hsv = cv2.cvtColor(self.current_frame, cv2.COLOR_BGR2HSV)
 
-        # Define color-specific masks
         red_lower1 = cv2.inRange(current_frame_hsv, (0, 100, 50), (10, 255, 255))
         red_lower2 = cv2.inRange(current_frame_hsv, (160, 100, 50), (180, 255, 255))
         red_mask = red_lower1 + red_lower2
@@ -61,9 +60,9 @@ class ColourChaser(Node):
         current_frame_mask = red_mask + green_mask
         contours, _ = cv2.findContours(current_frame_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        image_center_x = self.current_frame.shape[1] // 2  # Horizontal center of the image
-        image_center_y = self.current_frame.shape[0] // 2  # Vertical center for top/bottom split
-        self.bottom_contours = []  # Reset bottom contours vector
+        image_center_x = self.current_frame.shape[1] // 2  
+        image_center_y = self.current_frame.shape[0] // 2  
+        self.bottom_contours = [] 
         top_contour = None
         self.top_color = None
         self.contourArea = 0
@@ -94,7 +93,7 @@ class ColourChaser(Node):
                 self.get_logger().warn(f"Error processing top contour: {str(e)}")
 
         if self.bottom_contours:
-            self.bottom_contours.sort(key=lambda x: (x[1], -cv2.contourArea(x[0])))
+            self.bottom_contours.sort(key=lambda x: x[1])  )
 
         self.target_in_view = False
         self.target_centered = False
