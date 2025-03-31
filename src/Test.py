@@ -44,6 +44,8 @@ class ColourChaser(Node):
         self.contourArea = None
         self.bottom_contours = None
         self.searchCounter = 0
+        self.wanderCounter = 0
+
 
 
     def camera_callback(self, data):
@@ -66,23 +68,20 @@ class ColourChaser(Node):
         self.top_color = None
         self.contourArea = 0
 
-        # Separate top and bottom contours
         for contour in contours:
             M = cv2.moments(contour)
             if M['m00'] > 0:
                 cy = int(M['m01'] / M['m00'])
                 self.contourArea = cv2.contourArea(contour)
                 
-                if cy > image_center_y and self.contourArea > 500:  # Bottom contour condition
+                if cy > image_center_y and self.contourArea > 400:  
                     cx = int(M['m10'] / M['m00'])
                     distance_to_center = abs(cx - image_center_x)
-                    # Store contour with its distance to center for sorting
                     self.bottom_contours.append((contour, distance_to_center))
                 else:
-                    if self.contourArea > 3000:
+                    if self.contourArea > 2600:
                         top_contour = contour
 
-        # Process top contour for color
         if top_contour is not None:
             try:
                 T = cv2.moments(top_contour)
@@ -94,19 +93,16 @@ class ColourChaser(Node):
             except Exception as e:
                 self.get_logger().warn(f"Error processing top contour: {str(e)}")
 
-        # Sort bottom_contours by distance to center (closest first)
         if self.bottom_contours:
-            self.bottom_contours.sort(key=lambda x: x[1])  # Sort by distance_to_center
-            # Now self.bottom_contours[0][0] is the most centered contour
+            self.bottom_contours.sort(key=lambda x: (x[1], -cv2.contourArea(x[0])))
 
-        # Process the most centered contour (index 0) for color chasing
         self.target_in_view = False
         self.target_centered = False
         self.bottom_color = None
         self.cx = None
 
-        if self.bottom_contours:  # Check if there are any bottom contours
-            most_centered_contour = self.bottom_contours[0][0]  # Contour at index 0
+        if self.bottom_contours:  
+            most_centered_contour = self.bottom_contours[0][0]  
             M = cv2.moments(most_centered_contour)
             if M['m00'] > 0:
                 self.cx = int(M['m10'] / M['m00'])
@@ -114,17 +110,14 @@ class ColourChaser(Node):
                 self.contourArea = cv2.contourArea(most_centered_contour)
                 bottom_color = np.array(self.current_frame[cy, self.cx])
 
-                # Check color conditions for the most centered contour
                 if (self.top_color is not None and
-                    ((bottom_color[1] == 102 and self.top_color[1] == 102) or  # Green condition
-                    (bottom_color[2] == 102 and self.top_color[2] > 200))):  # Red condition
+                    ((bottom_color[1] == 102 and self.top_color[1] == 102) or  
+                    (bottom_color[2] == 102 and self.top_color[2] > 200))):  
                     self.target_in_view = True
                     self.bottom_color = bottom_color
                     self.targetArea = self.contourArea
-                    # Check if it's reasonably centered
                     self.target_centered = (image_center_x - self.current_frame.shape[1] // 3 <= self.cx <= image_center_x + self.current_frame.shape[1] // 3)
 
-        # Draw all bottom contours for visualization
         current_frame_contours = cv2.drawContours(self.current_frame, [c[0] for c in self.bottom_contours], -1, (255, 255, 0), 3)
         cv2.imshow("Image window", cv2.resize(current_frame_contours, (0, 0), fx=0.4, fy=0.4))
         cv2.waitKey(1)
@@ -148,12 +141,11 @@ class ColourChaser(Node):
             fullRangeObstacle = min(self.fullRange)
             proximityCheck = min_distance < self.avoid_distance
             # print("Minimum distance: ",min_distance)
-            print(f"Turn counter: {self.turnCounter} Search counter: {self.searchCounter} State: {self.state} Closest Obstacle: {fullRangeObstacle:.2f}m Area: {self.contourArea}")   
-        # Check if there are any blocks in the central region
+            print(f"| Turn counter: {self.turnCounter} | Search counter: {self.searchCounter} | Wander counter: {self.wanderCounter} | State: {self.state} | Closest Obstacle: {fullRangeObstacle:.2f}m | Area: {self.contourArea} |")   
         blocks_in_front = False
         if self.bottom_contours and self.current_frame is not None:
             image_center_x = self.current_frame.shape[1] // 2
-            center_range = self.current_frame.shape[1] // 3  # Middle third of the image
+            center_range = self.current_frame.shape[1] // 3  
             for contour, _ in self.bottom_contours:
                 M = cv2.moments(contour)
                 if M['m00'] > 0:
@@ -161,28 +153,41 @@ class ColourChaser(Node):
                     if image_center_x - center_range <= cx <= image_center_x + center_range:
                         blocks_in_front = True
                         break       
-        if proximityCheck or not self.target_centered:
-            self.state = "Searching"             
+        if self.bottom_contours is not None and blocks_in_front is not None:
+         print(f"| Bottom contours count: {len(self.bottom_contours)} | Blocks in front: {blocks_in_front} |")
+
+        if proximityCheck or self.searchCounter<400:
+            self.state = "Searching" 
+            self.searchCounter+=1
+            self.wanderCounter=0
             self.searcher()  
-        elif self.target_centered :            
-            self.state="Pushing"
-            self.searchCounter=0
-            self.pushBack = True
-            self.turnCounter = 0
-            self.stateCounter = 0
-            if self.cx>self.current_frame.shape[1] / 3:
-                self.turn_vel= -0.6
-                self.forward_vel=0.2
-            elif self.cx<2 * self.current_frame.shape[1] / 3:
-                self.turn_vel= 0.6
-                self.forward_vel=0.2
-            else:
-                self.turn_vel= 0.0
-                self.forward_vel=0.2                 
-        elif not proximityCheck and not blocks_in_front and self.searchCounter==0:
+        elif not blocks_in_front and self.wanderCounter<200 and self.state != "Pushing":
             self.state= "Wandering"
+            self.wanderCounter+=1
+            self.turn_vel= 0.0
             self.forward_vel = 0.2  
-                     
+            if self.searchCounter>400:
+                self.searchCounter=0
+        if self.target_centered:
+                self.searchCounter=400
+                self.turn_vel= 0.0          
+                self.state="Pushing"
+                self.pushBack = True
+                self.turnCounter = 0
+                self.stateCounter = 0
+                if self.cx>self.current_frame.shape[1] / 3:
+                    self.turn_vel= -0.3
+                    self.forward_vel=0.1
+                elif self.cx<2 * self.current_frame.shape[1] / 3:
+                    self.turn_vel= 0.3
+                    self.forward_vel=0.1
+                else:
+                    self.turn_vel= 0.0
+                    self.forward_vel=0.2
+        elif not blocks_in_front and self.state=="Pushing":
+            print("Extra push.")
+            self.turn_vel=0.0
+            self.forward_vel=0.3                   
 
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)
@@ -191,14 +196,13 @@ class ColourChaser(Node):
 
     def searcher(self):
         self.forward_vel = 0.0
-        self.searchCounter+=1
         if self.turnCounter == 0:
             if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):                    
                 self.turnDir =0.3
             else:
                 self.forward_vel = 0.0  
                 self.turnDir =-0.3
-        if self.turnCounter<400:
+        if self.turnCounter<300:
             self.forward_vel = 0.0  
             self.turn_vel= self.turnDir
             self.turnCounter+=1
@@ -216,7 +220,6 @@ class ColourChaser(Node):
             rangeMin = self.laser_scan.angle_min
             rangeMax = self.laser_scan.angle_max
             increment = self.laser_scan.angle_increment
-            # Define a narrower front range (e.g., ±45° from center)
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
             self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+40:forward_index-40:-1] 
