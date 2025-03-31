@@ -23,7 +23,7 @@ class ColourChaser(Node):
         self.br = CvBridge()
 
         self.AvoidRange = None
-        self.avoid_distance = 0.20  
+        self.avoid_distance = 0.25  
         self.stateCounter = 0
         self.state = "SEARCHING"  
         self.target_in_view = False
@@ -41,7 +41,9 @@ class ColourChaser(Node):
         self.pushBackCounter =0
         self.centered = False
         self.state = None
-
+        self.contourArea = None
+        self.bottom_contours = None
+        self.searchCounter = 0
 
 
     def camera_callback(self, data):
@@ -56,190 +58,158 @@ class ColourChaser(Node):
         
         current_frame_mask = red_mask + green_mask
         contours, _ = cv2.findContours(current_frame_mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-        #contours = sorted(contours, key=cv2.contourArea, reverse=True)
 
-        image_center_y = current_frame_hsv.shape[0] // 2
-        #offset_y = current_frame_hsv.shape[0] // 3
-        self.bottom_contours = []
+        image_center_x = self.current_frame.shape[1] // 2  # Horizontal center of the image
+        image_center_y = self.current_frame.shape[0] // 2  # Vertical center for top/bottom split
+        self.bottom_contours = []  # Reset bottom contours vector
         top_contour = None
         self.top_color = None
-        self.contourArea=0
+        self.contourArea = 0
 
+        # Separate top and bottom contours
         for contour in contours:
             M = cv2.moments(contour)
             if M['m00'] > 0:
                 cy = int(M['m01'] / M['m00'])
                 self.contourArea = cv2.contourArea(contour)
-                if cy > image_center_y and  self.contourArea > 300:# and self.contourArea<1000:# :cy < image_center_y + offset_y and
-                    self.bottom_contours.append(contour)
+                
+                if cy > image_center_y and self.contourArea > 500:  # Bottom contour condition
+                    cx = int(M['m10'] / M['m00'])
+                    distance_to_center = abs(cx - image_center_x)
+                    # Store contour with its distance to center for sorting
+                    self.bottom_contours.append((contour, distance_to_center))
                 else:
-                    top_contour = contour
+                    if self.contourArea > 3000:
+                        top_contour = contour
 
-        if top_contour is not None:  # Explicit None check
+        # Process top contour for color
+        if top_contour is not None:
             try:
                 T = cv2.moments(top_contour)
                 if T['m00'] > 0:
                     tx = int(T['m10'] / T['m00'])
                     ty = int(T['m01'] / T['m00'])
-                    # Ensure coordinates are within image bounds
                     if 0 <= tx < self.current_frame.shape[1] and 0 <= ty < self.current_frame.shape[0]:
                         self.top_color = np.array(self.current_frame[ty, tx])
             except Exception as e:
                 self.get_logger().warn(f"Error processing top contour: {str(e)}")
 
+        # Sort bottom_contours by distance to center (closest first)
+        if self.bottom_contours:
+            self.bottom_contours.sort(key=lambda x: x[1])  # Sort by distance_to_center
+            # Now self.bottom_contours[0][0] is the most centered contour
+
+        # Process the most centered contour (index 0) for color chasing
         self.target_in_view = False
         self.target_centered = False
-        self.bottom_color =None
+        self.bottom_color = None
+        self.cx = None
 
-        if len(self.bottom_contours) > 0:  
-            for contour in self.bottom_contours:
-                M = cv2.moments(contour)
-                if M['m00'] > 0:
-                    self.cx = int(M['m10'] / M['m00'])
-                    cy = int(M['m01'] / M['m00'])
-                    bottom_color = np.array(self.current_frame[cy, self.cx])
-                    
-                    if (self.top_color is not None and
-                        ((bottom_color[1] == 102 and self.top_color[1] == 102) or  # Green condition
-                        (bottom_color[2] == 102 and self.top_color[2] > 200))):  # Red condition
-                        self.target_in_view = True
-                        self.bottom_color = bottom_color
-                        self.targetArea = cv2.contourArea(contour)
+        if self.bottom_contours:  # Check if there are any bottom contours
+            most_centered_contour = self.bottom_contours[0][0]  # Contour at index 0
+            M = cv2.moments(most_centered_contour)
+            if M['m00'] > 0:
+                self.cx = int(M['m10'] / M['m00'])
+                cy = int(M['m01'] / M['m00'])
+                self.contourArea = cv2.contourArea(most_centered_contour)
+                bottom_color = np.array(self.current_frame[cy, self.cx])
 
-                        # print("Matched contour area:", self.targetArea)
-                        x, y, w, h = cv2.boundingRect(contour)
-                        # print(f"Matched contour width: {w}, height: {h}")          
-                        self.target_centered =True
-                        # if self.cx<data.width / 3:
-                        #     self.forward_vel=0
-                        #     self.turn_vel= -0.3
-                        # elif self.cx>2 * data.width / 3:
-                        #     self.forward_vel=0
-                        #     self.turn_vel= 0.3
-                        # self.centered = ((data.width / 3) + 20 <= self.cx <= (2 * data.width / 3) - 20)
-                        # if self.centered == True:
-                        #     self.target_centered=self.centered
-                        # #     self.turn_vel= 0.0                   
-                    break 
-        if not self.target_in_view:
-            self.bottom_color = None
-            self.target_centered = False
-            
+                # Check color conditions for the most centered contour
+                if (self.top_color is not None and
+                    ((bottom_color[1] == 102 and self.top_color[1] == 102) or  # Green condition
+                    (bottom_color[2] == 102 and self.top_color[2] > 200))):  # Red condition
+                    self.target_in_view = True
+                    self.bottom_color = bottom_color
+                    self.targetArea = self.contourArea
+                    # Check if it's reasonably centered
+                    self.target_centered = (image_center_x - self.current_frame.shape[1] // 3 <= self.cx <= image_center_x + self.current_frame.shape[1] // 3)
 
-        current_frame_contours = cv2.drawContours(self.current_frame, self.bottom_contours, -1, (255, 255, 0), 3)
+        # Draw all bottom contours for visualization
+        current_frame_contours = cv2.drawContours(self.current_frame, [c[0] for c in self.bottom_contours], -1, (255, 255, 0), 3)
         cv2.imshow("Image window", cv2.resize(current_frame_contours, (0, 0), fx=0.4, fy=0.4))
         cv2.waitKey(1)
+        
+        
     
     def timer_callback(self):
         # print(f"Top color (BGR) for contour:    {self.top_color}")
         # print(f"Bottom color (BGR) for contour: {self.bottom_color}")
-        
         self.stateCounter+=1
+        if self.stateCounter > 2000:
+            self.stateCounter=0
         if self.laser_scan is None:  
             self.forward_vel = 0.0
             self.turn_vel = 0.0
             print("Waiting for laser data...")
             return 
-        obstacle_detected = False
         if self.AvoidRange is not None:
             # print("Obstacle distance: ",self.avoid_distance)
-            min_distance = min(self.AvoidRange)
+            min_distance = min(self.AvoidRangeNarrow)
             fullRangeObstacle = min(self.fullRange)
+            proximityCheck = min_distance < self.avoid_distance
             # print("Minimum distance: ",min_distance)
-            # print(f"Turn counter: {self.turnCounter} State counter: {self.stateCounter} State: {self.state} Closest Obstacle: {fullRangeObstacle:.2f} Backup counter {self.pushCounter}")
-            print(self.state)
-
-            if min_distance < self.avoid_distance:
-                obstacle_detected = True
-        if obstacle_detected:  
-            self.state= "Avoiding obstacle."          
-            self.forward_vel = 0.0  
-            if self.turnCounter == 0:
-                if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
-                    self.turnDir =0.3
-                    self.turnCounter+=1
-                else:
-                    self.forward_vel = 0.0  
-                    self.turnDir =-0.3
-                    self.turnCounter+=1
-            if self.turnCounter<500:
-                self.forward_vel = 0.0  
-                self.turn_vel= self.turnDir
-                self.turnCounter+=1
-                if self.turnDir==0.3:
-                    print("Turning left")
-                else:
-                    print("Turning Right")
-            else:
-                self.turnCounter=0
-        elif self.stateCounter>1000:
-                self.state="Roaming"
-                self.stateCounter+=1
-                if min(self.AvoidRangeNarrow)> self.avoid_distance:
-                    if self.cx<self.current_frame.shape[1] / 3:
-                        self.turn_vel= -0.3
-                        self.forward_vel=0.1
-                    elif self.cx>2 * self.current_frame.shape[1] / 3:
-                        self.turn_vel= 0.3
-                        self.forward_vel=0.1
-                    else:
-                        self.turn_vel= 0.0
-                        self.forward_vel=0.2
-                self.turnCounter = 0
-                if self.stateCounter > 3000:
-                    self.stateCounter=0
-        elif self.target_centered:            
+            print(f"Turn counter: {self.turnCounter} Search counter: {self.searchCounter} State: {self.state} Closest Obstacle: {fullRangeObstacle:.2f}m Area: {self.contourArea}")   
+        # Check if there are any blocks in the central region
+        blocks_in_front = False
+        if self.bottom_contours and self.current_frame is not None:
+            image_center_x = self.current_frame.shape[1] // 2
+            center_range = self.current_frame.shape[1] // 3  # Middle third of the image
+            for contour, _ in self.bottom_contours:
+                M = cv2.moments(contour)
+                if M['m00'] > 0:
+                    cx = int(M['m10'] / M['m00'])
+                    if image_center_x - center_range <= cx <= image_center_x + center_range:
+                        blocks_in_front = True
+                        break       
+        if proximityCheck or not self.target_centered:
+            self.state = "Searching"             
+            self.searcher()  
+        elif self.target_centered :            
             self.state="Pushing"
+            self.searchCounter=0
             self.pushBack = True
             self.turnCounter = 0
-            self.stateCounter= 0
+            self.stateCounter = 0
             if self.cx>self.current_frame.shape[1] / 3:
-                self.turn_vel= -0.5
-                self.forward_vel=0.1
+                self.turn_vel= -0.6
+                self.forward_vel=0.2
             elif self.cx<2 * self.current_frame.shape[1] / 3:
-                self.turn_vel= 0.5
-                self.forward_vel=0.1
+                self.turn_vel= 0.6
+                self.forward_vel=0.2
             else:
                 self.turn_vel= 0.0
-                self.forward_vel=0.2
-        else:
-            self.state="Searching"
-            if self.pushBack:
-                print("back",self.pushCounter)
-                print("push",self.pushBackCounter)
-                if self.pushCounter <20:
-                    self.forward_vel = 0.2
-                    self.pushCounter+=1
-                else:
-                    if self.pushBackCounter<20:
-                        self.turn_vel= 0.0
-                        self.forward_vel = -0.2    
-                        self.pushBackCounter+=1  
-                    else:
-                        self.turn_vel= 0.0
-                        self.pushCounter = 0
-                        self.pushBackCounter=0
-                        self.pushBack = False  
-            elif self.turnCounter == 0:
-                self.forward_vel=0.0
-                if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
-                    self.turnDir =0.3
-                    self.turnCounter+=1
-                else:
-                    self.turnDir =-0.3
-                    self.turnCounter+=1
-            elif self.turnCounter<500:
-                self.turn_vel= self.turnDir
-                self.turnCounter+=1                    
-            else:
-                self.turnCounter=0
-            
+                self.forward_vel=0.2                 
+        elif not proximityCheck and not blocks_in_front and self.searchCounter==0:
+            self.state= "Wandering"
+            self.forward_vel = 0.2  
+                     
 
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)
         self.tw.angular.z = self.turn_vel
         self.pub_cmd_vel.publish(self.tw)
 
+    def searcher(self):
+        self.forward_vel = 0.0
+        self.searchCounter+=1
+        if self.turnCounter == 0:
+            if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):                    
+                self.turnDir =0.3
+            else:
+                self.forward_vel = 0.0  
+                self.turnDir =-0.3
+        if self.turnCounter<400:
+            self.forward_vel = 0.0  
+            self.turn_vel= self.turnDir
+            self.turnCounter+=1
+
+            if self.turnDir==0.3:
+                print("Turning left")
+            else:
+                print("Turning Right")                         
+        else:
+            self.turnCounter=0           
+    
     def laser_scan_callback(self, data):
         self.laser_scan = data
         if self.laser_scan is not None:
@@ -249,7 +219,7 @@ class ColourChaser(Node):
             # Define a narrower front range (e.g., ±45° from center)
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
-            self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+30:forward_index-30:-1] 
+            self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+40:forward_index-40:-1] 
             self.AvoidRange = self.laser_scan.ranges[forward_index+50:forward_index-50:-1]            
             self.avoidLeft = self.laser_scan.ranges[forward_index:]
             self.avoidRight = self.laser_scan.ranges[:forward_index]
