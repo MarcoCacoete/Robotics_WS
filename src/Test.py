@@ -139,6 +139,8 @@ class ColourChaser(Node):
             min_distance = min(self.AvoidRange)
             fullRangeObstacle = min(self.fullRange)
             proximityCheck = min_distance < self.avoid_distance
+            if proximityCheck:
+                self.turnCounter=0
             # print("Minimum distance: ",min_distance)
             print(f"| Turn counter: {self.turnCounter} | Search counter: {self.searchCounter} | Wander counter: {self.wanderCounter} | State: {self.state} | Closest Obstacle: {fullRangeObstacle:.2f}m | Area: {self.contourArea} |")   
         blocks_in_front = False
@@ -158,12 +160,12 @@ class ColourChaser(Node):
         if self.state == "Wandering"  and blocks_in_front:
             self.state= "Stop wandering"
 
-        if proximityCheck or self.searchCounter<250 or self.state == "Stop wandering":
+        if proximityCheck or self.searchCounter<200 or self.state == "Stop wandering":
             self.state = "Searching" 
             self.searchCounter+=1
             self.wanderCounter=0
             self.searcher()  
-        elif not blocks_in_front and self.wanderCounter<200 and self.state != "Pushing":
+        elif not blocks_in_front and self.wanderCounter<200 and (self.state != "Pushing"):
             self.state= "Wandering"
             self.wanderCounter+=1
             self.turn_vel= 0.0
@@ -173,56 +175,41 @@ class ColourChaser(Node):
            
         if self.target_centered and not proximityCheck :
             self.pushCounter+=1
-            self.searchCounter=400
             self.turn_vel= 0.0          
             self.state="Pushing"
             self.pushBack = True
             self.turnCounter = 0
             self.stateCounter = 0 
             if self.cx<self.current_frame.shape[1] / 3: 
-                self.turn_vel= 0.2 
+                print("Turning left")
+                self.turn_vel= 0.1
                 self.forward_vel=0.1 
             elif self.cx>2 * self.current_frame.shape[1] / 3: 
-                self.turn_vel= +0.2 
+                print("Turning Right")
+                self.turn_vel= -0.1
                 self.forward_vel=0.1 
             else: 
                 self.turn_vel= 0.0 
                 self.forward_vel=0.1
-            # # p controller adapted from workshop materials https://github.com/LCAS/teaching/blob/2425-devel/src/cmp3103m_ros2_code_fragments/cmp3103m_ros2_code_fragments/robot_feedback_control_todo.py
-            # # Define proportional gains (tune these values based on performance)
-            # k_p_turn = 0.01  # Adjust for turning speed
-            # k_p_forward = 0.001  # Adjust for forward speed
-
-            # # Compute error based on position in the frame
-            # error_x = self.cx - (self.current_frame.shape[1] / 2)
-
-            # # Apply proportional control
-            # self.turn_vel = k_p_turn * error_x  # Turns proportionally to error_x
-            # self.forward_vel = 0.05 + k_p_forward * abs(error_x)  # Base forward velocity + small proportional adjustment
-
-            # # Ensuring turn velocity is within reasonable limits
-            # self.turn_vel = max(min(self.turn_vel, 0.1), -0.1)  # Clamp turn velocity between -0.5 and 0.5
-
-        elif (not blocks_in_front and self.state=="Pushing" and self.pushCounter>100) or self.state == "Extra push":
-            self.state = "Extra push"
-            self.pushBackCounter=0
+        elif not self.target_centered and self.state=="Pushing" and self.pushCounter>50:
+            self.state = "Pushing"
+            print("Extra push")
+            print(self.pushCounter)
             self.turn_vel=0.0
-            self.forward_vel=0.1 
-            if blocks_in_front:
+            self.forward_vel=0.2
+            self.pushBackCounter+=1
+            if self.pushBackCounter>50:
+                print("Reversing")
                 self.turn_vel=0.0
-                self.pushBackCounter+=1
-                print(self.pushBackCounter)
-                if self.pushBackCounter<10:
-                 self.forward_vel=-0.1
-                else:
-                    self.forward_vel=0.1
-                
-                # else:
-                #     if not blocks_in_front:
-                #         self.state = "Wandering"
-                #         self.turn_vel=0.0
-                #         self.pushBackCounter=   0               
+                self.forward_vel=-0.1 
+        if self.pushBackCounter> 50:
+            self.pushBackCounter=0
+            self.state= "Wandering"
+           
 
+            
+           
+                
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)
         self.tw.angular.z = self.turn_vel
@@ -240,11 +227,11 @@ class ColourChaser(Node):
             self.forward_vel = 0.0  
             self.turn_vel= self.turnDir
             self.turnCounter+=1
-
             if self.turnDir==0.3:
-                print("Turning left")
+                print("Search Direction Left")
             else:
-                print("Turning Right")                         
+                print("Search Direction Right")
+                                    
         else:
             self.turnCounter=0           
     
@@ -287,7 +274,20 @@ if __name__ == '__main__':
 # else: 
 #     self.turn_vel= 0.0 self.forward_vel=0.1
 
+ # # p controller adapted from workshop materials https://github.com/LCAS/teaching/blob/2425-devel/src/cmp3103m_ros2_code_fragments/cmp3103m_ros2_code_fragments/robot_feedback_control_todo.py
+            # # Define proportional gains (tune these values based on performance)
+            # k_p_turn = 0.01  # Adjust for turning speed
+            # k_p_forward = 0.001  # Adjust for forward speed
 
+            # # Compute error based on position in the frame
+            # error_x = self.cx - (self.current_frame.shape[1] / 2)
+
+            # # Apply proportional control
+            # self.turn_vel = k_p_turn * error_x  # Turns proportionally to error_x
+            # self.forward_vel = 0.05 + k_p_forward * abs(error_x)  # Base forward velocity + small proportional adjustment
+
+            # # Ensuring turn velocity is within reasonable limits
+            # self.turn_vel = max(min(self.turn_vel, 0.1), -0.1)  # Clamp turn velocity between -0.5 and 0.5
 
 
 
