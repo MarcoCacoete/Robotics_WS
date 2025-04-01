@@ -23,7 +23,7 @@ class ColourChaser(Node):
         self.br = CvBridge()
 
         self.AvoidRange = None
-        self.avoid_distance = 0.15  
+        self.avoid_distance = 0.20 
         self.stateCounter = 0
         self.state = "SEARCHING"  
         self.target_in_view = False
@@ -136,7 +136,7 @@ class ColourChaser(Node):
             return 
         if self.AvoidRange is not None:
             # print("Obstacle distance: ",self.avoid_distance)
-            min_distance = min(self.AvoidRangeNarrow)
+            min_distance = min(self.AvoidRange)
             fullRangeObstacle = min(self.fullRange)
             proximityCheck = min_distance < self.avoid_distance
             # print("Minimum distance: ",min_distance)
@@ -155,7 +155,10 @@ class ColourChaser(Node):
         if self.bottom_contours is not None and blocks_in_front is not None:
          print(f"| Bottom contours count: {len(self.bottom_contours)} | Blocks in front: {blocks_in_front} |")
 
-        if proximityCheck or self.searchCounter<250:
+        if self.state == "Wandering"  and blocks_in_front:
+            self.state= "Stop wandering"
+
+        if proximityCheck or self.searchCounter<250 or self.state == "Stop wandering":
             self.state = "Searching" 
             self.searchCounter+=1
             self.wanderCounter=0
@@ -167,6 +170,7 @@ class ColourChaser(Node):
             self.forward_vel = 0.2  
             if self.searchCounter>250:
                 self.searchCounter=0
+           
         if self.target_centered and not proximityCheck :
             self.pushCounter+=1
             self.searchCounter=400
@@ -174,30 +178,50 @@ class ColourChaser(Node):
             self.state="Pushing"
             self.pushBack = True
             self.turnCounter = 0
-            self.stateCounter = 0
-            if self.cx<self.current_frame.shape[1] / 3:
-                self.turn_vel= 0.2
+            self.stateCounter = 0 
+            if self.cx<self.current_frame.shape[1] / 3: 
+                self.turn_vel= 0.2 
+                self.forward_vel=0.1 
+            elif self.cx>2 * self.current_frame.shape[1] / 3: 
+                self.turn_vel= +0.2 
+                self.forward_vel=0.1 
+            else: 
+                self.turn_vel= 0.0 
                 self.forward_vel=0.1
-            elif self.cx>2 * self.current_frame.shape[1] / 3:
-                self.turn_vel= +0.2
-                self.forward_vel=0.1
-            else:
-                self.turn_vel= 0.0
-                self.forward_vel=0.1
-        elif not blocks_in_front and self.state=="Pushing" and self.pushCounter>30:
-            print("Extra push.")
+            # # p controller adapted from workshop materials https://github.com/LCAS/teaching/blob/2425-devel/src/cmp3103m_ros2_code_fragments/cmp3103m_ros2_code_fragments/robot_feedback_control_todo.py
+            # # Define proportional gains (tune these values based on performance)
+            # k_p_turn = 0.01  # Adjust for turning speed
+            # k_p_forward = 0.001  # Adjust for forward speed
+
+            # # Compute error based on position in the frame
+            # error_x = self.cx - (self.current_frame.shape[1] / 2)
+
+            # # Apply proportional control
+            # self.turn_vel = k_p_turn * error_x  # Turns proportionally to error_x
+            # self.forward_vel = 0.05 + k_p_forward * abs(error_x)  # Base forward velocity + small proportional adjustment
+
+            # # Ensuring turn velocity is within reasonable limits
+            # self.turn_vel = max(min(self.turn_vel, 0.1), -0.1)  # Clamp turn velocity between -0.5 and 0.5
+
+        elif (not blocks_in_front and self.state=="Pushing" and self.pushCounter>100) or self.state == "Extra push":
+            self.state = "Extra push"
             self.pushBackCounter=0
             self.turn_vel=0.0
-            self.forward_vel=0.3  
+            self.forward_vel=0.1 
             if blocks_in_front:
                 self.turn_vel=0.0
                 self.pushBackCounter+=1
-                if self.pushBackCounter<20:
-                    self.forward_vel=-0.2
+                print(self.pushBackCounter)
+                if self.pushBackCounter<10:
+                 self.forward_vel=-0.1
                 else:
-                    self.state = "Wandering"
-                    self.turn_vel=0.0
-                    self.pushBackCounter=   0               
+                    self.forward_vel=0.1
+                
+                # else:
+                #     if not blocks_in_front:
+                #         self.state = "Wandering"
+                #         self.turn_vel=0.0
+                #         self.pushBackCounter=   0               
 
         self.tw = Twist()
         self.tw.linear.x = float(self.forward_vel)
@@ -256,7 +280,12 @@ if __name__ == '__main__':
 
 
 
-
+# if self.cx<self.current_frame.shape[1] / 3: 
+#     self.turn_vel= 0.2 self.forward_vel=0.1 
+# elif self.cx>2 * self.current_frame.shape[1] / 3: 
+#     self.turn_vel= +0.2 self.forward_vel=0.1 
+# else: 
+#     self.turn_vel= 0.0 self.forward_vel=0.1
 
 
 
