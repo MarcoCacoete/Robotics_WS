@@ -33,3 +33,5 @@ ros2 launch uol_tidybot tidybot.launch.py world:=level_2_1.world
 
  ros2 run  uol_tidybot generate_objects --ros-args -p red:=false -p n_objects:=5
  ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=5
+
+ zenoh-bridge-ros2dds -e tcp/10.82.0.104:7447

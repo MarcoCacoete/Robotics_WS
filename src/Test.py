@@ -18,7 +18,7 @@ class ColourChaser(Node):
         self.pub_cmd_vel = self.create_publisher(Twist, 'cmd_vel', 10)
         timer_period = 0.1  # 0.1 seconds per tick
         self.timer = self.create_timer(timer_period, self.timer_callback)
-        self.create_subscription(Image, '/limo/depth_camera_link/image_raw', self.camera_callback, 10)
+        self.create_subscription(Image, '/camera/color/image_raw', self.camera_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.laser_scan_callback, 10)
         self.br = CvBridge()
 
@@ -29,6 +29,8 @@ class ColourChaser(Node):
         self.target_in_view = False
         self.target_centered = False
         self.laser_scan = None
+        self.laser_scan_ranges = None
+
         self.top_color = None
         self.bottom_color = None
         self.turnCounter=0
@@ -129,14 +131,17 @@ class ColourChaser(Node):
         self.stateCounter+=1
         if self.stateCounter > 2000:
             self.stateCounter=0
-        if self.laser_scan is None:  
+
+        if self.laser_scan_ranges is None:  
             self.forward_vel = 0.0
             self.turn_vel = 0.0
             print("Waiting for laser data...")
             return 
         if self.AvoidRange is not None:
             # print("Obstacle distance: ",self.avoid_distance)
+
             min_distance = min(self.AvoidRange)
+
             fullRangeObstacle = min(self.fullRange)
             proximityCheck = min_distance < self.avoid_distance
             if proximityCheck:
@@ -236,18 +241,32 @@ class ColourChaser(Node):
             self.turnCounter=0           
     
     def laser_scan_callback(self, data):
+        print('here')
         self.laser_scan = data
-        if self.laser_scan is not None:
+        self.laser_scan_ranges = self.laser_scan.ranges
+        # print(data.ranges)
+        # for i in data.ranges:
+        #     print(i)
+        for idx, value in enumerate(self.laser_scan_ranges):
+            if value < data.range_min:
+                self.laser_scan_ranges[idx] = 20000
+
+        # if data[0] < self.laser_scan.range_min:
+        #     data[0]= 200000000
+        # self.laser_scan = data     
+        # print(self.laser_scan_ranges,"here")
+       
+        if self.laser_scan_ranges is not None:
             rangeMin = self.laser_scan.angle_min
             rangeMax = self.laser_scan.angle_max
             increment = self.laser_scan.angle_increment
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
-            self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+40:forward_index-40:-1] 
-            self.AvoidRange = self.laser_scan.ranges[forward_index+50:forward_index-50:-1]            
-            self.avoidLeft = self.laser_scan.ranges[forward_index:]
-            self.avoidRight = self.laser_scan.ranges[:forward_index]
-            self.fullRange = self.laser_scan.ranges[:]
+            self.AvoidRangeNarrow = self.laser_scan_ranges[forward_index+40:forward_index-40:-1] 
+            self.AvoidRange = self.laser_scan_ranges[forward_index+50:forward_index-50:-1]            
+            self.avoidLeft = self.laser_scan_ranges[forward_index:]
+            self.avoidRight = self.laser_scan_ranges[:forward_index]
+            self.fullRange = self.laser_scan_ranges[:]
             self.leftMeanAvoid = np.mean(self.avoidLeft)  
             self.rightMeanAvoid = np.mean(self.avoidRight)  
 
