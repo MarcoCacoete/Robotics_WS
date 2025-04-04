@@ -64,3 +64,5 @@ ros2 topic list
 ros2 topic echo /cmd_vel
 # Check Python symlinks:
 ls -l install/limo_chaser/lib/python3.8/site-packages/limo_chaser/Assignment.py
+
+zip -r limo_chaser_submission.zip src/limo_chaser/ package.xml setup.py setup.cfg
