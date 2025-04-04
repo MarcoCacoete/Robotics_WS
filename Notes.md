@@ -27,9 +27,9 @@ To make sure block is still being pushed, pull robot back some distance when blo
 
 ros2 launch uol_tidybot tidybot.launch.py world:=level_2_1.world
 
- ros2 launch uol_tidybot tidybot.launch.py world:=level_2_3.world
+ros2 launch uol_tidybot tidybot.launch.py world:=level_2_2.world
 
- ros2 launch uol_tidybot tidybot.launch.py world:=level_2_2.world
+ros2 launch uol_tidybot tidybot.launch.py world:=level_2_3.world
 
- ros2 run  uol_tidybot generate_objects --ros-args -p red:=false -p n_objects:=5
- ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=5
+ros2 run  uol_tidybot generate_objects --ros-args -p red:=false -p n_objects:=5
+ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=5

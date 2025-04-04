@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-
+import sys
 import rclpy
 from rclpy.node import Node
 from sensor_msgs.msg import Image, LaserScan
@@ -7,27 +7,34 @@ from geometry_msgs.msg import Twist
 from cv_bridge import CvBridge
 import cv2
 import numpy as np
-from threading import Lock
+from rclpy.executors import MultiThreadedExecutor
 
 class ColourChaser(Node):
-    def __init__(self):
-        super().__init__('colour_chaser')
+    def __init__(self,mode="gazebo"):
+        super().__init__('block_pusher')
+        self.mode= mode
+        self.get_logger().info(f"Running in {mode} mode")
+        
+        camera_topic = '/camera/color/image_raw' if mode == 'bot' else '/limo/depth_camera_link/image_raw'
+        
+
         
         self.turn_vel = 0.0
         self.forward_vel = 0.0
         self.pub_cmd_vel = self.create_publisher(Twist, 'cmd_vel', 10)
-        timer_period = 0.1  # 0.1 seconds per tick
-        self.create_subscription(Image, '/limo/depth_camera_link/image_raw', self.camera_callback, 10)
+        self.create_subscription(Image, camera_topic, self.camera_callback, 10) #/camera/color/image_raw for real
         self.create_subscription(LaserScan, '/scan', self.laser_scan_callback, 10)
         self.br = CvBridge()
-
+        print (camera_topic)
         self.AvoidRange = None
         self.avoid_distance = 0.20 
         self.stateCounter = 0
-        self.state = "Searching"  
+        self.state = "SEARCHING"  
         self.target_in_view = False
         self.target_centered = False
         self.laser_scan = None
+        self.laser_scan_ranges = None
+
         self.top_color = None
         self.bottom_color = None
         self.turnCounter=0
@@ -39,7 +46,6 @@ class ColourChaser(Node):
         self.pushBack =False
         self.pushBackCounter =0
         self.centered = False
-        self.state = None
         self.contourArea = None
         self.bottom_contours = None
         self.searchCounter = 0
@@ -72,7 +78,7 @@ class ColourChaser(Node):
                 cy = int(M['m01'] / M['m00'])
                 self.contourArea = cv2.contourArea(contour)
                 
-                if cy > image_center_y and self.contourArea > 325:  
+                if cy > image_center_y and self.contourArea > 350:  
                     cx = int(M['m10'] / M['m00'])
                     distance_to_center = abs(cx - image_center_x)
                     self.bottom_contours.append((contour, distance_to_center))
@@ -92,12 +98,7 @@ class ColourChaser(Node):
                 self.get_logger().warn(f"Error processing top contour: {str(e)}")
 
         if self.bottom_contours:
-            self.bottom_contours.sort(key=lambda x: x[1]) 
-            top_3 = self.bottom_contours[:3]  # Get the first 3 (or fewer if less than 3)
-            if top_3:  # Ensure there’s at least one contour
-                top_3.sort(key=lambda x: cv2.contourArea(x[0]), reverse=True)  # Sort by area, descending
-                # Replace the first 3 in the original list with the sorted ones
-                self.bottom_contours = top_3 + self.bottom_contours[3:]
+            self.bottom_contours.sort(key=lambda x: x[1])  
 
         self.target_in_view = False
         self.target_centered = False
@@ -133,10 +134,17 @@ class ColourChaser(Node):
         self.stateCounter+=1
         if self.stateCounter > 2000:
             self.stateCounter=0
-        
+
+        if self.laser_scan_ranges is None:  
+            self.forward_vel = 0.0
+            self.turn_vel = 0.0
+            print("Waiting for laser data...")
+            return 
         if self.AvoidRange is not None:
             # print("Obstacle distance: ",self.avoid_distance)
+
             min_distance = min(self.AvoidRange)
+
             fullRangeObstacle = min(self.fullRange)
             proximityCheck = min_distance < self.avoid_distance
             if proximityCheck:
@@ -145,12 +153,13 @@ class ColourChaser(Node):
             print(f"| Turn counter: {self.turnCounter} | Search counter: {self.searchCounter} | Wander counter: {self.wanderCounter} | State: {self.state} | Closest Obstacle: {fullRangeObstacle:.2f}m | Area: {self.contourArea} |")   
         blocks_in_front = False
         if self.bottom_contours and self.current_frame is not None:
+            image_center_x = self.current_frame.shape[1] // 2
             center_range = self.current_frame.shape[1] // 3  
             for contour, _ in self.bottom_contours:
                 M = cv2.moments(contour)
                 if M['m00'] > 0:
                     cx = int(M['m10'] / M['m00'])
-                    if center_range  <= cx >=  2* center_range:
+                    if image_center_x - center_range <= cx <= image_center_x + center_range:
                         blocks_in_front = True
                         break       
         if self.bottom_contours is not None and blocks_in_front is not None:
@@ -159,74 +168,51 @@ class ColourChaser(Node):
         if self.state == "Wandering"  and blocks_in_front:
             self.state= "Stop wandering"
 
-        if proximityCheck or self.searchCounter<150 or self.state == "Stop wandering":
+        if proximityCheck or self.searchCounter<200 or self.state == "Stop wandering":
             self.state = "Searching" 
             self.searchCounter+=1
             self.wanderCounter=0
             self.searcher()  
-        elif not blocks_in_front and self.wanderCounter<150 and (self.state != "Pushing"):
+        elif not blocks_in_front and self.wanderCounter<200 and (self.state != "Pushing"):
             self.state= "Wandering"
             self.wanderCounter+=1
             self.turn_vel= 0.0
             self.forward_vel = 0.2  
+            if self.searchCounter>250:
+                self.searchCounter=0
            
-           
-        if self.target_centered and not proximityCheck:
-            self.searchCounter=0
-            self.pushBackCounter=0
+        if self.target_centered and not proximityCheck :
             self.pushCounter+=1
             self.turn_vel= 0.0          
             self.state="Pushing"
             self.pushBack = True
             self.turnCounter = 0
-            self.stateCounter = 0             
-            first = self.current_frame.shape[1] / 3
-            second = 2 * self.current_frame.shape[1] / 3
-            # print("Blcok Location: ",self.cx,"First 3rd: ",first,"Second 3rd: ",second)            
-            distToLeft = self.cx - first
-            distToRight = second - self.cx 
-            speedCalcLeft= 2*distToRight/1000
-            speedCalcRight = 2*distToLeft/1000        
-            print (f"Small Adjust speed Left: ,{speedCalcLeft:.2f},Small Adjust speed Right: ,{speedCalcRight:.2f}")               
+            self.stateCounter = 0 
             if self.cx<self.current_frame.shape[1] / 3: 
                 print("Turning left")
-                # if speedCalcLeft<0.4:
-                self.turn_vel= speedCalcLeft
+                self.turn_vel= 0.1
                 self.forward_vel=0.1 
-                # else:
-                #     self.turn_vel= 0.4
             elif self.cx>2 * self.current_frame.shape[1] / 3: 
                 print("Turning Right")
-                # if speedCalcRight <0.4:
-                self.turn_vel= -speedCalcRight
-                self.forward_vel=0.1
-                # else:
-                #     self.turn_vel= -0.4               
+                self.turn_vel= -0.1
+                self.forward_vel=0.1 
             else: 
                 self.turn_vel= 0.0 
-                self.forward_vel=0.2
-            self.turn_vel = 0.0
-        else:
-            if not self.target_centered and self.state=="Pushing" and self.pushCounter>0 and not blocks_in_front:
-                self.state = "Pushing"
-                print("Extra push")
-                print(self.pushCounter)
+                self.forward_vel=0.1
+        elif not self.target_centered and self.state=="Pushing" and self.pushCounter>50:
+            self.state = "Pushing"
+            print("Extra push")
+            print(self.pushCounter)
+            self.turn_vel=0.0
+            self.forward_vel=0.2
+            self.pushBackCounter+=1
+            if self.pushBackCounter>50:
+                print("Reversing")
                 self.turn_vel=0.0
-                self.forward_vel=0.2
-                self.pushBackCounter+=1
-                if self.pushBackCounter>30:
-                    print("Reversing")
-                    self.turn_vel=0.0
-                    self.forward_vel=-0.1 
-                    self.state="Stop wandering"
-
-            elif self.pushBackCounter> 20:
-                self.pushBackCounter=0
-                self.state="Stop wandering"
-
-          
-
-            
+                self.forward_vel=-0.1 
+        if self.pushBackCounter> 50:
+            self.pushBackCounter=0
+            self.state= "Wandering"           
 
             
            
@@ -257,31 +243,42 @@ class ColourChaser(Node):
             self.turnCounter=0           
     
     def laser_scan_callback(self, data):
+        print('here')
         self.laser_scan = data
-        if self.laser_scan is not None:
+        self.laser_scan_ranges = self.laser_scan.ranges
+        
+        for idx, value in enumerate(self.laser_scan_ranges):
+            if value < data.range_min:
+                self.laser_scan_ranges[idx] = 20000
+
+       
+        if self.laser_scan_ranges is not None:
             rangeMin = self.laser_scan.angle_min
             rangeMax = self.laser_scan.angle_max
             increment = self.laser_scan.angle_increment
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
-            self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+40:forward_index-40:-1] 
-            self.AvoidRange = self.laser_scan.ranges[forward_index+50:forward_index-50:-1]            
-            self.avoidLeft = self.laser_scan.ranges[forward_index:]
-            self.avoidRight = self.laser_scan.ranges[:forward_index]
-            self.fullRange = self.laser_scan.ranges[:]
+            self.AvoidRangeNarrow = self.laser_scan_ranges[forward_index+40:forward_index-40:-1] 
+            self.AvoidRange = self.laser_scan_ranges[forward_index+50:forward_index-50:-1]            
+            self.avoidLeft = self.laser_scan_ranges[forward_index:]
+            self.avoidRight = self.laser_scan_ranges[:forward_index]
+            self.fullRange = self.laser_scan_ranges[:]
             self.leftMeanAvoid = np.mean(self.avoidLeft)  
             self.rightMeanAvoid = np.mean(self.avoidRight)  
-        self.timer_callback()
+            self.timer_callback()
 
 
 
 def main(args=None):
-    print('Starting colour_chaser.py.')
+    mode = "bot" if "--bot" in sys.argv else "gazebo"
+    print(f"Starting in {mode} mode")    
     cv2.startWindowThread()
-    rclpy.init(args=args)
-    colour_chaser = ColourChaser()
-    rclpy.spin(colour_chaser)
-    colour_chaser.destroy_node()
+    rclpy.init(args=sys.argv)
+    block_pusher = ColourChaser(mode=mode)
+    executor = MultiThreadedExecutor(num_threads=4)  
+    executor.add_node(block_pusher)
+    executor.spin()
+    block_pusher.destroy_node()
     rclpy.shutdown()
 
 if __name__ == '__main__':
@@ -314,120 +311,3 @@ if __name__ == '__main__':
 
 
 
-
-
-
-    # def timer_callback(self):     
-    #     if self.laser_scan is None:  # Check if laser data is available
-    #         self.forward_vel = 0.0
-    #         self.turn_vel = 0.0
-    #         print("Waiting for laser data...")
-    #         return
-    #     print(f"Push Counter: {self.pushCounter} State counter: {self.stateCounter}, Turn Counter: {self.turnCounter}, Left average space: {self.leftMeanAvoid:.2f}, Right average space: {self.rightMeanAvoid:.2f}, Dice Area: {self.contourArea}, Top colour: {self.top_color}, Bottom colour: {self.bottom_color}")
-
-    #     # Obstacle detection with better front range
-    #     obstacle_detected = False
-    #     if self.AvoidRange is not None:
-    #         min_distance = min(self.AvoidRange)
-    #         if min_distance < self.avoid_distance:
-    #             obstacle_detected = True
-    #             print(f"Obstacle detected! Min distance: {min_distance:.2f}m")
-        
-    #     if obstacle_detected:
-    #         # Stop forward motion and turn away
-    #         self.forward_vel = 0.0  # Stop moving forward 
-    #         if self.turnCounter == 0:
-    #             if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
-    #                 self.turnDirLock=True
-    #                 self.turnDir =0.3
-    #                 self.turnCounter+=1
-    #             else:
-    #                 self.turnDirLock=True
-    #                 self.turnDir =-0.3
-    #                 self.turnCounter+=1
-    #         if self.turnCounter<500:
-    #             self.turn_vel= self.turnDir
-    #             self.turnCounter+=1
-    #             if self.turnDir==0.3:
-    #                 print("Turning left")
-    #             else:
-    #                 print("Turning Right")
-    #         else:
-    #             self.turnCounter=0        
-    #         self.state = "SEARCHING"
-
-    #     if self.state == "SEARCHING":
-    #         self.forward_vel = 0.0
-    #         if self.stateCounter >500:
-    #             self.state= "ROAMING"
-    #         print(self.state)
-    #         self.stateCounter+=1
-    #         if (self.target_in_view 
-    #             and self.target_centered 
-    #             and ((self.bottom_color is not None and self.top_color is not None)  # Check colors exist
-    #                 and ((self.bottom_color[1] == 102 and self.top_color[1] == 102)  # Green condition
-    #                     or 
-    #                     (self.bottom_color[2] == 102 and self.top_color[2] > 200)))):  # Red condition
-    #             self.state = "PUSHING"
-    #         else:
-    #             if self.turnCounter == 0:
-    #                 if np.mean(self.avoidLeft)  > np.mean(self.avoidRight):
-    #                     self.turnDirLock=True
-    #                     self.turnDir =0.3
-    #                     self.turnCounter+=1
-    #                 else:
-    #                     self.turnDirLock=True
-    #                     self.turnDir =-0.3
-    #                     self.turnCounter+=1
-    #             if self.turnCounter<500:
-    #                 self.turn_vel= self.turnDir
-    #                 self.turnCounter+=1
-    #                 if self.turnDir==0.3:
-    #                     print("Turning left")
-    #                 else:
-    #                     print("Turning Right")
-    #             else:
-    #                 self.turnCounter=0
-    #     elif self.state == "PUSHING":
-    #         self.stateCounter=0
-    #         if ((self.bottom_color is not None and self.top_color is not None)  # Check colors exist
-    #                 and ((self.bottom_color[1] == 102 and self.top_color[1] == 102)  # Green condition
-    #                 or  (self.bottom_color[2] == 102 and self.top_color[2] > 200))):
-    #             print(self.bottom_color)
-    #             if self.cx>self.current_frame.shape[1] / 3:
-    #                 self.turn_vel= -0.3
-    #                 self.forward_vel=0.2
-    #                 print("Adjusting")                   
-    #             elif self.cx<2 * self.current_frame.shape[1] / 3:
-    #                 self.turn_vel= 0.3
-    #                 self.forward_vel=0.2
-    #                 print("Adjusting")
-    #             else:
-    #                 self.forward_vel=0.2
-    #                 print(self.state)
-    #         else:                
-    #             self.turn_vel = 0.0
-    #             self.pushCounter +=1
-    #             if self.pushCounter>200:
-    #                 self.state = "SEARCHING"
-    #                 self.pushCounter =0
-    #     elif self.state == "ROAMING":   
-    #         self.turnCounter=0         
-    #         print(self.state)
-    #         self.stateCounter+=1
-    #         if min(self.AvoidRange) > self.avoid_distance and self.contourArea < 200:
-    #             if self.cx<self.current_frame.shape[1] / 3:
-    #                 self.forward_vel=0.2
-    #                 self.turn_vel= -0.3
-    #             elif self.cx>2 * self.current_frame.shape[1] / 3:
-    #                 self.forward_vel=0.2
-    #                 self.turn_vel= 0.3
-    #             else:
-    #                 self.forward_vel=0.2   
-    #     else:
-    #         self.forward_vel=0.2
-
-            
-    #     if self.stateCounter >10000:
-    #         print("All objects pushed.")
-    #         rclpy.shutdown()  
