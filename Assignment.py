@@ -8,16 +8,22 @@ from cv_bridge import CvBridge
 import cv2
 import numpy as np
 from threading import Lock
+import sys
 
 class ColourChaser(Node):
-    def __init__(self):
+    def __init__(self, mode):
         super().__init__('colour_chaser')
+
+        self.declare_parameter('mode', 'gazebo')
+        self.mode = self.get_parameter('mode').value
+        self.get_logger().info(f"Mode: {self.mode}")
+        cameraTopic = '/camera/color/image_raw' if mode == 'bot' else '/limo/depth_camera_link/image_raw'
         
         self.turn_vel = 0.0
         self.forward_vel = 0.0
         self.pub_cmd_vel = self.create_publisher(Twist, 'cmd_vel', 10)
         timer_period = 0.1  # 0.1 seconds per tick
-        self.create_subscription(Image, '/limo/depth_camera_link/image_raw', self.camera_callback, 10)
+        self.create_subscription(Image, cameraTopic, self.camera_callback, 10)
         self.create_subscription(LaserScan, '/scan', self.laser_scan_callback, 10)
         self.br = CvBridge()
 
@@ -288,10 +294,16 @@ class ColourChaser(Node):
 
 
 def main(args=None):
-    print('Starting colour_chaser.py.')
+    print('Starting Limo Pusher.')
+
+    botMode= "--bot" in sys.argv
+
+    if botMode:
+        sys.argv.remove("--bot")
+    
     cv2.startWindowThread()
-    rclpy.init(args=args)
-    colour_chaser = ColourChaser()
+    rclpy.init(args=sys.argv)
+    colour_chaser = ColourChaser(mode="bot" if botMode else "gazebo")
     rclpy.spin(colour_chaser)
     colour_chaser.destroy_node()
     rclpy.shutdown()
