@@ -33,3 +33,34 @@ ros2 launch uol_tidybot tidybot.launch.py world:=level_2_3.world
 
 ros2 run  uol_tidybot generate_objects --ros-args -p red:=false -p n_objects:=5
 ros2 run  uol_tidybot generate_objects --ros-args -p red:=true -p n_objects:=5
+
+
+# 1. FIRST-TIME SETUP (runs once)
+cd /workspaces/Robotics_WS
+colcon build --symlink-install --packages-select limo_chaser
+source install/setup.bash
+
+# 2. AFTER EDITING Assignment.py (normal workflow):
+# Option A: If you only changed Python code (no new imports):
+ros2 run limo_chaser limo_chaser --bot
+
+# Option B: If you added new imports or dependencies:
+colcon build --symlink-install --packages-select limo_chaser
+source install/setup.bash
+ros2 run limo_chaser limo_chaser --bot
+
+# 3. NUCLEAR OPTION (if something breaks):
+rm -rf build/limo_chaser install/limo_chaser && \
+colcon build --symlink-install --packages-select limo_chaser && \
+source install/setup.bash && \
+ros2 run limo_chaser limo_chaser --bot
+
+# 4. VERIFICATION COMMANDS:
+# Check node is running:
+ros2 node list
+# Check topics:
+ros2 topic list
+# Monitor velocity commands:
+ros2 topic echo /cmd_vel
+# Check Python symlinks:
+ls -l install/limo_chaser/lib/python3.8/site-packages/limo_chaser/Assignment.py
