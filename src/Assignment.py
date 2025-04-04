@@ -180,14 +180,11 @@ class ColourChaser(Node):
             if self.pushBackCounter>20:
                 self.state = "Searching"
 
-
         if self.state == "Searching":
             self.pushBackCounter = 0
             self.batteryCapacity -=0.01
             self.searchCounter+=1            
             self.searcher()
-            
-
 
         if not self.target_centered and not blocksBlocking and not proximityCheck and self.searchCounter>150 and self.pushCounter == 0:
             self.state ="Wandering"
@@ -234,8 +231,7 @@ class ColourChaser(Node):
             print("Bot returned to base, shutting down in: ",self.pushCounter)
             if self.pushCounter<=0:
                 print("Robot has shutdown.")
-                rclpy.shutdown()               
-               
+                rclpy.shutdown()                 
                                         
         if self.state == "Wandering" :
             self.batteryCapacity -=0.04
@@ -249,9 +245,6 @@ class ColourChaser(Node):
         self.tw.linear.x = float(self.forward_vel)
         self.tw.angular.z = self.turn_vel
         self.pub_cmd_vel.publish(self.tw)
-        
-        
-
 
     def searcher(self):
         self.forward_vel = 0.0
@@ -268,11 +261,9 @@ class ColourChaser(Node):
             if self.turnDir==0.3:
                 print("Search Direction Left")
             else:
-                print("Search Direction Right")
-                                    
+                print("Search Direction Right")                                    
         else:
             self.turnCounter=0           
-    
    
     def laser_scan_callback(self, data):      
         self.batteryCapacity -=0.01
@@ -298,9 +289,6 @@ class ColourChaser(Node):
             # self.leftMeanAvoid = np.mean(self.avoidLeft)  
             # self.rightMeanAvoid = np.mean(self.avoidRight)  
             self.timer_callback()
-        
-
-
 
 def main(args=None):
     print('Starting Limo Pusher.')
