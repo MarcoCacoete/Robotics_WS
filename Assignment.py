@@ -14,8 +14,7 @@ class ColourChaser(Node):
     def __init__(self, mode):
         super().__init__('colour_chaser')
 
-        self.declare_parameter('mode', 'gazebo')
-        self.mode = self.get_parameter('mode').value
+        self.mode = mode
         self.get_logger().info(f"Mode: {self.mode}")
         cameraTopic = '/camera/color/image_raw' if mode == 'bot' else '/limo/depth_camera_link/image_raw'
         
