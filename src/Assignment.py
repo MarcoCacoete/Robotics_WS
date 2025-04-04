@@ -273,23 +273,32 @@ class ColourChaser(Node):
         else:
             self.turnCounter=0           
     
-    def laser_scan_callback(self, data):
+   
+    def laser_scan_callback(self, data):      
         self.batteryCapacity -=0.01
+        print('here')
         self.laser_scan = data
-        if self.laser_scan is not None:
+        self.laser_scan_ranges = self.laser_scan.ranges
+        
+        for idx, value in enumerate(self.laser_scan_ranges):
+            if value < data.range_min:
+                self.laser_scan_ranges[idx] = 20000
+    
+        if self.laser_scan_ranges is not None:
             rangeMin = self.laser_scan.angle_min
             rangeMax = self.laser_scan.angle_max
             increment = self.laser_scan.angle_increment
             middle = (rangeMin + rangeMax) / 2
             forward_index = int((middle - rangeMin) / increment)
-            # self.AvoidRangeNarrow = self.laser_scan.ranges[forward_index+40:forward_index-40:-1] 
-            self.AvoidRange = self.laser_scan.ranges[forward_index+55:forward_index-55:-1]            
-            self.avoidLeft = self.laser_scan.ranges[forward_index:]
-            self.avoidRight = self.laser_scan.ranges[:forward_index]
-            # self.fullRange = self.laser_scan.ranges[:]
+            # self.AvoidRangeNarrow = self.laser_scan_ranges[forward_index+40:forward_index-40:-1] 
+            self.AvoidRange = self.laser_scan_ranges[forward_index+50:forward_index-50:-1]            
+            self.avoidLeft = self.laser_scan_ranges[forward_index:]
+            self.avoidRight = self.laser_scan_ranges[:forward_index]
+            # self.fullRange = self.laser_scan_ranges[:]
             # self.leftMeanAvoid = np.mean(self.avoidLeft)  
             # self.rightMeanAvoid = np.mean(self.avoidRight)  
-        self.timer_callback()
+            self.timer_callback()
+        
 
 
 
