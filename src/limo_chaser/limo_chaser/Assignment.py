@@ -178,19 +178,33 @@ class ColourChaser(Node):
         if not self.target_centered and self.state == "Pushing": # This block allows the re-assignment of a state if the pushing state exits too early. Reverts to searching,
             print(self.pushBackCounter)
             self.pushBackCounter+=1
-            if self.pushBackCounter>20:                          # It only does this once a block that is now out of sight has been pushed for a bit, otherwise no blocks would get pushed.
-                self.state = "Searching"
-
+            if self.pushBackCounter>30:                          # It only does this once a block that is now out of sight has been pushed for a bit, otherwise no blocks would get pushed.
+                self.state = "Reversing"
+            #lif self.pushBackCounter>100:
+             #   self.state = "Searching" # This is a failsafe to prevent the robot from getting stuck in a loop, it resets the counter to 0 after a while.
+         
+                
         if self.state == "Searching":                            # Triggers the searcher function, also resets the counter used to push further
             self.pushBackCounter = 0
+            self.forward_vel = 0.0
             self.batteryCapacity -=0.01                          # Another simulated battery drain decrement
             self.searchCounter+=1                                # This counter allows search to do a large rotation before the robot triggering wandering state, so it's not always glued to the walls.
             self.searcher()
             
         # Wandering logic, it checks for gaps, if search has happened long enough and advances to areas that it otherwise wouldn't go without introducing some randomness. Prevents search loops.
-        if not self.target_centered and not blocksBlocking and not proximityCheck and self.searchCounter>150 and self.pushCounter == 0: # Also resets the pushCounter
+        if not self.target_centered and not blocksBlocking and not proximityCheck and self.searchCounter>200 and self.pushCounter == 0: # Also resets the pushCounter
             self.state ="Wandering"
-
+            
+        if self.state == "Reversing":  # This state reverses the robot in an attempt to re-aquire the target it is meant to be pushing, 
+                                       # this mitigates the tendency for it to try to push the next block in range, instead of stickign with current block for longer.
+            self.forward_vel = -0.2    # Reverse speed
+            self.pushBackCounter+=1    # Keeps incrementing counter to trigger the search state after a bit, so that it also doesn't reverse forever.
+            if self.pushBackCounter>45:# Searching already is set to re-aquire target if it is indeed present again.
+                self.forward_vel = 0.0
+                self.turn_vel = 0.0
+                self.state = "Searching"
+                
+                
         if self.state=="Pushing":                                # Pushing logic, sets initially turn speed to 0 also drains most simulated battery.
             print("Centered", self.target_centered)
             self.batteryCapacity -=0.04
@@ -221,7 +235,8 @@ class ColourChaser(Node):
                     self.turn_vel= 0.0 
                     self.forward_vel=0.2
 
-                self.bottom_contours= None                         # I reset contours vector again so that my shutdown condition works in the end.
+                self.bottom_contours= None
+               # self.turnCounter=0# I reset contours vector again so that my shutdown condition works in the end.
                     
         if self.batteryCapacity/100 < 25 and self.searchCounter<500: # This is not a state but a block of code that I created to shutdown the robot after some counters hit some thresholds.
             self.pushCounter+=1                                      # I picked the thresholds just by experimenting, and the robot seems to have enough time to get to the green maker and wait.
@@ -287,7 +302,7 @@ class ColourChaser(Node):
             forward_index = int((middle - rangeMin) / increment)# Initially I only used the value for distance directly in front of the robot, but that was just a bad initial idea.
             # self.AvoidRangeNarrow = self.laser_scan_ranges[forward_index+40:forward_index-40:-1] 
             self.AvoidRange = self.laser_scan_ranges[forward_index+50:forward_index-50:-1] # I settled on this range as a cone that, for the most part allows the robot to still be close to obstacles            
-                                                                                           # when it moves to try and push some blocks that are too close to retrieve. Sometimes it still gets stuck.
+           # self.AvoidRange = self.laser_scan_ranges[:] # when it moves to try and push some blocks that are too close to retrieve. Sometimes it still gets stuck.
             self.avoidLeft = self.laser_scan_ranges[forward_index:]         # These two ranges are the ones I used to determine average space on boths sides, to pick which direction the robot should turn.   
             self.avoidRight = self.laser_scan_ranges[:forward_index]                       
             # self.fullRange = self.laser_scan_ranges[:]                    # Option for a safer range for obstacle avoidance.
